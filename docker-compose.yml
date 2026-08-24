@@ -1,0 +1,11 @@
+services:
+  thought-refiner:
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY}
+    env_file: .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped

@@ -1,0 +1,14 @@
+node_modules
+.git
+.output
+.vinxi
+.nitro
+dist
+dist-ssr
+.env
+.env.example
+invite-keys.txt
+supabase/seed-invite-keys.sql
+.vscode
+.idea
+*.log
