@@ -3,7 +3,11 @@ import {
   buildCriticUserText,
   buildClarifyUserText,
   CLARIFY_INSTRUCTION,
+  FINAL_INSTRUCTIONS,
   VERDICT_SCHEMA,
+  DEFAULT_CRITIC_INSTRUCTION,
+  DEFAULT_CRITIC_MODEL,
+  DEFAULT_FINAL_MODEL,
   type Settings,
   type TestStep,
   type Verdict,
@@ -26,7 +30,12 @@ export async function loadSettings(supabase: Client, userId: string): Promise<Se
   if (data) return data as Settings;
   const { data: created, error: insertError } = await supabase
     .from("settings")
-    .insert({ user_id: userId })
+    .insert({
+      user_id: userId,
+      critic_instruction: DEFAULT_CRITIC_INSTRUCTION,
+      critic_model: DEFAULT_CRITIC_MODEL,
+      final_model: DEFAULT_FINAL_MODEL,
+    })
     .select("critic_instruction, critic_model, final_model, debug_mode")
     .single();
   if (insertError) throw new Error(insertError.message);
@@ -261,9 +270,6 @@ export async function skipStep(
 
   return { reachedEnd: done };
 }
-
-const FINAL_INSTRUCTIONS =
-  "You are answering a prompt that has been deliberately refined through a sequence of quality tests. Answer it directly, thoroughly and honestly. Where the prompt states success criteria, meet them explicitly.";
 
 export async function runFinal(supabase: Client, userId: string, input: { runId: string }) {
   const { run, settings } = await loadRun(supabase, userId, input.runId);
