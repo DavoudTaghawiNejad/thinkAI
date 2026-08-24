@@ -9,7 +9,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,14 +33,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { saveSettings, saveSteps } from "@/lib/forge.functions";
-import {
-  CRITIC_MODELS,
-  DEFAULT_CRITIC_INSTRUCTION,
-  FINAL_MODELS,
-  type Settings,
-  type TestStep,
-} from "@/lib/forge.shared";
+import { resetToDefaults, saveSettings, saveSteps } from "@/lib/forge.functions";
+import { CRITIC_MODELS, FINAL_MODELS, type Settings, type TestStep } from "@/lib/forge.shared";
 
 type DraftStep = {
   id?: string;
@@ -82,6 +87,17 @@ export function SettingsDialog({
       await queryClient.invalidateQueries();
       toast.success("Settings saved.");
       onOpenChange(false);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reset = useMutation({
+    mutationFn: () => resetToDefaults(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+      toast.success("Settings reset to defaults.");
+      // Dialog stays open: fresh settings/steps flow back through props, and the
+      // effect above re-syncs draftSettings/draftSteps from them while open.
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -221,19 +237,6 @@ export function SettingsDialog({
                   setDraftSettings({ ...draftSettings, critic_instruction: e.target.value })
                 }
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  setDraftSettings({
-                    ...draftSettings,
-                    critic_instruction: DEFAULT_CRITIC_INSTRUCTION,
-                  })
-                }
-              >
-                Update to latest defaults
-              </Button>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -290,13 +293,42 @@ export function SettingsDialog({
           </TabsContent>
         </Tabs>
 
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
-            {save.isPending ? "Saving…" : "Save settings"}
-          </Button>
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="outline" disabled={save.isPending || reset.isPending}>
+                Reset to defaults
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Reset settings to defaults?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This overwrites your critic instruction, models, debug mode, and entire test
+                  sequence with the server's current default configuration. Your existing settings
+                  and test steps are permanently replaced. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className={buttonVariants({ variant: "destructive" })}
+                  onClick={() => reset.mutate()}
+                >
+                  Reset to defaults
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => save.mutate()} disabled={save.isPending}>
+              {save.isPending ? "Saving…" : "Save settings"}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

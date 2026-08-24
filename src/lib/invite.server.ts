@@ -1,11 +1,5 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import {
-  DEFAULT_CRITIC_INSTRUCTION,
-  DEFAULT_CRITIC_MODEL,
-  DEFAULT_FINAL_MODEL,
-  DEFAULT_DEBUG_MODE,
-  DEFAULT_TEST_STEPS,
-} from "./forge.shared";
+import { loadDefaultsConfig } from "./defaults-config.server";
 
 export async function redeemInviteAndCreateUser(input: {
   email: string;
@@ -28,20 +22,21 @@ export async function redeemInviteAndCreateUser(input: {
   });
   if (createErr) throw new Error(createErr.message);
 
-  // The default settings/test-step provisioning lives here, sourced from forge.shared.ts,
-  // so it stays in sync with the one place those defaults are edited (the DB trigger only
-  // creates the profile row — see supabase/migrations/*_centralize_defaults.sql).
+  // The default settings/test-step provisioning lives here, read fresh from
+  // config/defaults.yaml (the DB trigger only creates the profile row — see
+  // supabase/migrations/*_centralize_defaults.sql).
+  const config = await loadDefaultsConfig();
   const userId = created.user.id;
   await supabaseAdmin.from("settings").insert({
     user_id: userId,
-    critic_instruction: DEFAULT_CRITIC_INSTRUCTION,
-    critic_model: DEFAULT_CRITIC_MODEL,
-    final_model: DEFAULT_FINAL_MODEL,
-    debug_mode: DEFAULT_DEBUG_MODE,
+    critic_instruction: config.critic_instruction,
+    critic_model: config.critic_model,
+    final_model: config.final_model,
+    debug_mode: config.debug_mode,
   });
   await supabaseAdmin
     .from("test_steps")
-    .insert(DEFAULT_TEST_STEPS.map((step, position) => ({ user_id: userId, position, ...step })));
+    .insert(config.test_steps.map((step, position) => ({ user_id: userId, position, ...step })));
 
   return { ok: true };
 }

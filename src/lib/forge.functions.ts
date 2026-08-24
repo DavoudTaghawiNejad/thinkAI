@@ -157,6 +157,42 @@ export const saveSteps = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const resetToDefaults = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { loadDefaultsConfig } = await import("./defaults-config.server");
+    const config = await loadDefaultsConfig();
+
+    const { error: settingsError } = await context.supabase.from("settings").upsert(
+      {
+        user_id: context.userId,
+        critic_instruction: config.critic_instruction,
+        critic_model: config.critic_model,
+        final_model: config.final_model,
+        debug_mode: config.debug_mode,
+      },
+      { onConflict: "user_id" },
+    );
+    if (settingsError) throw new Error(settingsError.message);
+
+    const { error: deleteError } = await context.supabase
+      .from("test_steps")
+      .delete()
+      .eq("user_id", context.userId);
+    if (deleteError) throw new Error(deleteError.message);
+
+    const { error: insertError } = await context.supabase.from("test_steps").insert(
+      config.test_steps.map((step, position) => ({
+        user_id: context.userId,
+        position,
+        ...step,
+      })),
+    );
+    if (insertError) throw new Error(insertError.message);
+
+    return { ok: true };
+  });
+
 export const askClarification = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>

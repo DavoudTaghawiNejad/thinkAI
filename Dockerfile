@@ -14,6 +14,7 @@ RUN bun run build
 FROM node:22-slim AS runtime
 WORKDIR /app
 COPY --from=build /app/.output ./.output
+COPY --from=build /app/config ./config
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0
 EXPOSE 3000
 CMD ["node", ".output/server/index.mjs"]

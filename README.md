@@ -62,6 +62,11 @@ Vite replaces those statically) and binds the container to `127.0.0.1:3000` only
 TLS-terminating reverse proxy in front of it — see `deploy/apache-thinkAI.conf` for an
 Apache vhost template.
 
+`config/defaults.yaml` (critic/final/clarify instructions, default models, the starting
+test-step sequence) is bind-mounted read-only into the container — edit it on the host and
+the change takes effect on the very next signup or "Reset to defaults" click, no rebuild or
+restart needed.
+
 ## Built with
 
 - TanStack Start

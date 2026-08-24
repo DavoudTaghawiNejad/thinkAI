@@ -10,6 +10,10 @@ services:
       # Internal gateway, not the public URL — server-side code talks to auth/rest
       # directly over the docker network instead of round-tripping through Apache.
       SUPABASE_URL: http://gateway:8000
+    volumes:
+      # Bind-mounted read-only so an edit to this file on the host takes effect on
+      # the very next signup or AI call — no rebuild, no restart.
+      - ./config:/app/config:ro
     depends_on:
       - gateway
     ports:

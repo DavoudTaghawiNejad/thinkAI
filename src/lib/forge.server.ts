@@ -1,13 +1,9 @@
 import { runModelRequest, ProviderError } from "./ai-providers.server";
+import { loadDefaultsConfig } from "./defaults-config.server";
 import {
   buildCriticUserText,
   buildClarifyUserText,
-  CLARIFY_INSTRUCTION,
-  FINAL_INSTRUCTIONS,
   VERDICT_SCHEMA,
-  DEFAULT_CRITIC_INSTRUCTION,
-  DEFAULT_CRITIC_MODEL,
-  DEFAULT_FINAL_MODEL,
   type Settings,
   type TestStep,
   type Verdict,
@@ -28,13 +24,15 @@ export async function loadSettings(supabase: Client, userId: string): Promise<Se
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (data) return data as Settings;
+  const config = await loadDefaultsConfig();
   const { data: created, error: insertError } = await supabase
     .from("settings")
     .insert({
       user_id: userId,
-      critic_instruction: DEFAULT_CRITIC_INSTRUCTION,
-      critic_model: DEFAULT_CRITIC_MODEL,
-      final_model: DEFAULT_FINAL_MODEL,
+      critic_instruction: config.critic_instruction,
+      critic_model: config.critic_model,
+      final_model: config.final_model,
+      debug_mode: config.debug_mode,
     })
     .select("critic_instruction, critic_model, final_model, debug_mode")
     .single();
@@ -274,6 +272,8 @@ export async function skipStep(
 export async function runFinal(supabase: Client, userId: string, input: { runId: string }) {
   const { run, settings } = await loadRun(supabase, userId, input.runId);
   const prompt: string = run.current_prompt;
+  const config = await loadDefaultsConfig();
+  const finalInstructions = config.final_instructions;
 
   const requestParams = {
     reasoning: { effort: "medium", summary: "auto" },
@@ -284,7 +284,7 @@ export async function runFinal(supabase: Client, userId: string, input: { runId:
   try {
     const result = await runModelRequest({
       model: settings.final_model,
-      instructions: FINAL_INSTRUCTIONS,
+      instructions: finalInstructions,
       input: prompt,
       reasoningEffort: "medium",
     });
@@ -294,7 +294,7 @@ export async function runFinal(supabase: Client, userId: string, input: { runId:
       user_id: userId,
       kind: "final",
       model: settings.final_model,
-      system_text: FINAL_INSTRUCTIONS,
+      system_text: finalInstructions,
       user_text: prompt,
       request_params: requestParams,
       raw_response: result.text,
@@ -322,7 +322,7 @@ export async function runFinal(supabase: Client, userId: string, input: { runId:
       user_id: userId,
       kind: "final",
       model: settings.final_model,
-      system_text: FINAL_INSTRUCTIONS,
+      system_text: finalInstructions,
       user_text: prompt,
       request_params: requestParams,
       error_text: message,
@@ -340,7 +340,8 @@ export async function askClarify(
   const stepIndex: number = run.step_index;
   const step = steps[Math.min(stepIndex, steps.length - 1)];
 
-  const systemText = CLARIFY_INSTRUCTION;
+  const config = await loadDefaultsConfig();
+  const systemText = config.clarify_instruction;
   const userText = buildClarifyUserText({
     stepName: step?.name ?? "—",
     stepInstruction: step?.instruction ?? "—",
