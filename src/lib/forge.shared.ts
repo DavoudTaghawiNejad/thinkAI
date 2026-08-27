@@ -1,4 +1,4 @@
-// Default setup (critic/final/clarify instructions, default models, the starting
+// Default setup (critic/final instructions, default models, the starting
 // test-step sequence) lives in config/defaults.yaml, loaded via
 // src/lib/defaults-config.server.ts — that's the file to edit to change defaults.
 // This file keeps only what's shared between client and server: types, the
@@ -137,29 +137,3 @@ export const VERDICT_SCHEMA = {
 
 export const BETWEEN_TESTS_GUIDANCE =
   "Before the next test, rework your text: answer the open questions, restructure it, and tighten the paragraphs — shorter, without losing meaning.";
-
-/** The exact user-message text sent for an auxiliary clarification. History is never included. */
-export function buildClarifyUserText(args: {
-  stepName: string;
-  stepInstruction: string;
-  question: string;
-  message: string;
-  prompt: string;
-}) {
-  return [
-    `CURRENT TEST: ${args.stepName}`,
-    `TEST INSTRUCTION: ${args.stepInstruction}`,
-    "",
-    "CURRENT DRAFT PROMPT:",
-    "<<<PROMPT",
-    args.prompt,
-    "PROMPT",
-    "",
-    args.question ? `REFINEMENT QUESTION IN FOCUS:\n${args.question}` : "",
-    "",
-    "AUTHOR ASKS:",
-    args.message,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}

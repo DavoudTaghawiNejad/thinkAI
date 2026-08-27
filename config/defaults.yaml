@@ -6,9 +6,8 @@
 # mounted read-only into the running container (see docker-compose.yml); in local
 # dev it is read directly from this path in the repo.
 #
-# {{searchable_facts_rule}} inside critic_instruction/clarify_instruction below is
-# replaced at load time with the searchable_facts_rule value — edit the rule once,
-# here, and both instructions stay in sync.
+# {{searchable_facts_rule}} inside critic_instruction below is replaced at load
+# time with the searchable_facts_rule value — edit the rule once, here.
 #
 # Keep critic_model/final_model in sync with CRITIC_MODELS/FINAL_MODELS in
 # src/lib/forge.shared.ts — if a value here isn't one of those choices, the
@@ -37,13 +36,6 @@ critic_instruction: |-
   {{searchable_facts_rule}}
 
   Be concise and concrete. Judge only the named test, nothing else.
-
-clarify_instruction: >-
-  You are a helper standing next to an author who is refining a prompt. The author
-  asks you about one of the refinement questions a reviewer raised. Explain what the
-  question is getting at, why it matters, and what kinds of answers would satisfy
-  it. Be brief and concrete: a few sentences, plain text, no headings. You are NOT
-  scoring anything and NOT rewriting the author's prompt. {{searchable_facts_rule}}
 
 final_instructions: >-
   You are answering a prompt that has been deliberately refined through a sequence

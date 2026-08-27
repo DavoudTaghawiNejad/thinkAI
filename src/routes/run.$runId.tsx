@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Bug, Check, MessageCircleQuestion, SkipForward, Sparkles } from "lucide-react";
+import { ArrowLeft, Bug, Check, SkipForward, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,13 +13,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import {
-  askClarification,
-  generateFinalAnswer,
-  getRun,
-  reviewPrompt,
-  skipCurrentStep,
-} from "@/lib/forge.functions";
+import { generateFinalAnswer, getRun, reviewPrompt, skipCurrentStep } from "@/lib/forge.functions";
 import {
   BETWEEN_TESTS_GUIDANCE,
   buildCriticUserText,
@@ -56,10 +50,6 @@ function Workbench() {
   const [draft, setDraft] = useState("");
   const [dirty, setDirty] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
-  const [clarifyText, setClarifyText] = useState("");
-  const [clarifyQuestion, setClarifyQuestion] = useState("");
-  const [thread, setThread] = useState<{ ask: string; answer: string }[]>([]);
-  const clarifyRef = useRef<HTMLTextAreaElement | null>(null);
   const autoReviewed = useRef(false);
 
   useEffect(() => {
@@ -110,34 +100,6 @@ function Workbench() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
-
-  const clarify = useMutation({
-    mutationFn: () =>
-      askClarification({
-        data: { runId, question: clarifyQuestion, message: clarifyText },
-      }),
-    onSuccess: async (result) => {
-      setThread((t) => [...t, { ask: clarifyText, answer: result.answer }]);
-      setClarifyText("");
-      setClarifyQuestion("");
-      await queryClient.invalidateQueries({ queryKey: ["run", runId] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const citeQuestion = (question: string) => {
-    setClarifyQuestion(question);
-    setClarifyText((current) => {
-      const quoted = `> ${question}\n\n`;
-      return current.startsWith(quoted) ? current : quoted + current;
-    });
-    requestAnimationFrame(() => {
-      const el = clarifyRef.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
-    });
-  };
 
   const finalize = useMutation({
     mutationFn: () => generateFinalAnswer({ data: { runId } }),
@@ -302,14 +264,7 @@ function Workbench() {
                     {latest.questions.map((q, i) => (
                       <li key={i} className="flex gap-2 text-sm">
                         <span className="font-mono text-primary">{i + 1}.</span>
-                        <button
-                          type="button"
-                          onClick={() => citeQuestion(q)}
-                          className="text-left underline-offset-4 hover:text-primary hover:underline"
-                          title="Ask for a clarification about this question"
-                        >
-                          {q}
-                        </button>
+                        <span>{q}</span>
                       </li>
                     ))}
                   </ul>
@@ -317,47 +272,6 @@ function Workbench() {
               )}
             </div>
           )}
-
-          <div className="rounded-lg border border-dashed border-border bg-card/60 p-4">
-            <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-muted-foreground">
-              Ask for a clarification
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Side conversation — it does not count as an iteration and never changes your score.
-              Click a question above to quote it here.
-            </p>
-            <Textarea
-              ref={clarifyRef}
-              rows={4}
-              value={clarifyText}
-              onChange={(e) => setClarifyText(e.target.value)}
-              placeholder="What exactly is this question asking for?"
-              className="mt-3 text-sm"
-            />
-            <div className="mt-2 flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => clarify.mutate()}
-                disabled={clarify.isPending || !clarifyText.trim()}
-              >
-                <MessageCircleQuestion className="mr-2 h-4 w-4" />
-                {clarify.isPending ? "Asking…" : "Ask"}
-              </Button>
-            </div>
-            {thread.length > 0 && (
-              <ul className="mt-4 space-y-3">
-                {thread.map((entry, i) => (
-                  <li key={i} className="rounded-md border border-border bg-background p-3">
-                    <p className="whitespace-pre-wrap text-xs text-muted-foreground">{entry.ask}</p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
-                      {entry.answer}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
 
           {sequenceDone && !run.final_answer && !latest && (
             <div className="rounded-lg border border-border bg-card p-5 text-sm text-muted-foreground">

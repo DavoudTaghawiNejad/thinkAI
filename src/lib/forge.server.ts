@@ -2,7 +2,6 @@ import { runModelRequest, ProviderError } from "./ai-providers.server";
 import { loadDefaultsConfig } from "./defaults-config.server";
 import {
   buildCriticUserText,
-  buildClarifyUserText,
   VERDICT_SCHEMA,
   type Settings,
   type TestStep,
@@ -324,66 +323,6 @@ export async function runFinal(supabase: Client, userId: string, input: { runId:
       model: settings.final_model,
       system_text: finalInstructions,
       user_text: prompt,
-      request_params: requestParams,
-      error_text: message,
-    });
-    throw new Error(message);
-  }
-}
-
-export async function askClarify(
-  supabase: Client,
-  userId: string,
-  input: { runId: string; question: string; message: string },
-) {
-  const { run, steps, settings } = await loadRun(supabase, userId, input.runId);
-  const stepIndex: number = run.step_index;
-  const step = steps[Math.min(stepIndex, steps.length - 1)];
-
-  const config = await loadDefaultsConfig();
-  const systemText = config.clarify_instruction;
-  const userText = buildClarifyUserText({
-    stepName: step?.name ?? "—",
-    stepInstruction: step?.instruction ?? "—",
-    question: input.question,
-    message: input.message,
-    prompt: run.current_prompt,
-  });
-  const requestParams = {
-    reasoning: { effort: "low", summary: "auto" },
-    stream: true,
-    store: false,
-  };
-
-  try {
-    const result = await runModelRequest({
-      model: settings.critic_model,
-      instructions: systemText,
-      input: userText,
-      reasoningEffort: "low",
-    });
-    await supabase.from("ai_calls").insert({
-      run_id: input.runId,
-      user_id: userId,
-      kind: "clarify",
-      model: settings.critic_model,
-      system_text: systemText,
-      user_text: userText,
-      request_params: requestParams,
-      raw_response: result.text,
-      latency_ms: result.latencyMs,
-      run_ref: result.runId ?? null,
-    });
-    return { answer: result.text.trim() || "The model returned no text." };
-  } catch (error) {
-    const message = error instanceof ProviderError ? error.message : (error as Error).message;
-    await supabase.from("ai_calls").insert({
-      run_id: input.runId,
-      user_id: userId,
-      kind: "clarify",
-      model: settings.critic_model,
-      system_text: systemText,
-      user_text: userText,
       request_params: requestParams,
       error_text: message,
     });

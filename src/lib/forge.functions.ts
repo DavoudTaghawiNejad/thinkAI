@@ -192,19 +192,3 @@ export const resetToDefaults = createServerFn({ method: "POST" })
 
     return { ok: true };
   });
-
-export const askClarification = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        runId: z.string().uuid(),
-        question: z.string().default(""),
-        message: z.string().min(1),
-      })
-      .parse(d),
-  )
-  .handler(async ({ context, data }) => {
-    const { askClarify } = await import("./forge.server");
-    return askClarify(context.supabase as never, context.userId, data);
-  });

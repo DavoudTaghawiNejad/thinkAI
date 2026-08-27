@@ -4,5 +4,5 @@ import type { ProviderRequest } from "./types";
 export function pickMaxTokens(req: ProviderRequest): number {
   if (req.jsonSchema) return 2048; // critic verdict — small, bounded JSON
   if (req.reasoningEffort === "medium") return 8192; // final-answer role
-  return 2048; // clarify / low-effort role
+  return 2048; // low-effort role
 }

@@ -17,7 +17,6 @@ const DefaultsConfigFileSchema = z.object({
   debug_mode: z.boolean(),
   searchable_facts_rule: z.string().min(1),
   critic_instruction: z.string().min(1),
-  clarify_instruction: z.string().min(1),
   final_instructions: z.string().min(1),
   test_steps: z.array(DefaultTestStepSchema).min(1),
 });
@@ -63,6 +62,5 @@ export async function loadDefaultsConfig(): Promise<DefaultsConfig> {
   return {
     ...cfg,
     critic_instruction: cfg.critic_instruction.replaceAll(PLACEHOLDER, cfg.searchable_facts_rule),
-    clarify_instruction: cfg.clarify_instruction.replaceAll(PLACEHOLDER, cfg.searchable_facts_rule),
   };
 }
