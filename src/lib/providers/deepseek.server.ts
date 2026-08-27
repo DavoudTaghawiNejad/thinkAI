@@ -70,6 +70,8 @@ async function streamDeepseekOnce(
   let text = "";
   let reasoning = "";
   let runId: string | undefined;
+  let sawDone = false;
+  let finishReason: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -81,17 +83,27 @@ async function streamDeepseekOnce(
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
       const payload = trimmed.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
+      if (!payload) continue;
+      if (payload === "[DONE]") {
+        sawDone = true;
+        continue;
+      }
       let evt: {
         id?: string;
-        choices?: [{ delta?: { content?: string; reasoning_content?: string } }];
+        choices?: [
+          {
+            delta?: { content?: string; reasoning_content?: string };
+            finish_reason?: string | null;
+          },
+        ];
       };
       try {
         evt = JSON.parse(payload);
       } catch {
         continue;
       }
-      const delta = evt.choices?.[0]?.delta;
+      const choice = evt.choices?.[0];
+      const delta = choice?.delta;
       if (typeof delta?.content === "string") {
         text += delta.content;
         opts?.onDelta?.(delta.content);
@@ -100,8 +112,22 @@ async function streamDeepseekOnce(
         reasoning += delta.reasoning_content;
         opts?.onReasoning?.(delta.reasoning_content);
       }
+      if (choice?.finish_reason) finishReason = choice.finish_reason;
       runId ??= evt.id;
     }
+  }
+
+  // DeepSeek closes the SSE stream cleanly (done=true) even when the connection
+  // dropped mid-response — no error is thrown, we just have a partial body. The
+  // end-of-stream markers ([DONE] or a finish_reason) are the only signal that
+  // the model actually finished. Missing both means truncation: throw a
+  // "terminated" error so withTransientRetry re-runs it instead of returning
+  // half a JSON object.
+  if (!sawDone && !finishReason) {
+    throw new Error("DeepSeek stream terminated before the response finished.");
+  }
+  if (finishReason === "length") {
+    throw new ProviderError(500, "DeepSeek hit its output-token limit before finishing the reply.");
   }
 
   return { text, reasoning, ...(runId ? { runId } : {}), latencyMs: Date.now() - started };

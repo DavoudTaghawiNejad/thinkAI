@@ -71,6 +71,8 @@ async function streamAnthropicOnce(
   let toolInputJson = "";
   let reasoning = "";
   let runId: string | undefined;
+  let sawMessageStop = false;
+  let stopReason: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -86,7 +88,13 @@ async function streamAnthropicOnce(
       let evt: {
         type?: string;
         message?: { id?: string };
-        delta?: { type?: string; text?: string; partial_json?: string; thinking?: string };
+        delta?: {
+          type?: string;
+          text?: string;
+          partial_json?: string;
+          thinking?: string;
+          stop_reason?: string;
+        };
         error?: { message?: string };
       };
       try {
@@ -97,6 +105,10 @@ async function streamAnthropicOnce(
 
       if (evt.type === "message_start") {
         runId = evt.message?.id;
+      } else if (evt.type === "message_delta" && evt.delta?.stop_reason) {
+        stopReason = evt.delta.stop_reason;
+      } else if (evt.type === "message_stop") {
+        sawMessageStop = true;
       } else if (evt.type === "content_block_delta") {
         const delta = evt.delta;
         if (delta?.type === "text_delta" && typeof delta.text === "string") {
@@ -116,6 +128,20 @@ async function streamAnthropicOnce(
         );
       }
     }
+  }
+
+  // A cleanly-ended reader (done=true) is not proof the model finished — a dropped
+  // connection looks the same. Anthropic's message_stop / stop_reason are the real
+  // completion signal; without them the body is truncated, so throw "terminated"
+  // and let withTransientRetry re-run it.
+  if (!sawMessageStop && !stopReason) {
+    throw new Error("Anthropic stream terminated before the response finished.");
+  }
+  if (stopReason === "max_tokens") {
+    throw new ProviderError(
+      500,
+      "Anthropic hit its output-token limit before finishing the reply.",
+    );
   }
 
   return {
