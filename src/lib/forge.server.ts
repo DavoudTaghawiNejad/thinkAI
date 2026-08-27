@@ -83,13 +83,59 @@ export async function loadRun(supabase: Client, userId: string, runId: string) {
   };
 }
 
+/** Thrown when the critic's reply can't be read as the verdict JSON — a re-sample usually fixes it. */
+class VerdictParseError extends Error {}
+
+/**
+ * Pull the first balanced { … } object out of a string, ignoring braces inside
+ * string literals. Lets us recover a verdict even when the model wraps it in
+ * prose or a stray token. Returns the slice from the first "{" on if unbalanced
+ * (e.g. a truncated response) so JSON.parse throws a useful error.
+ */
+function extractJsonObject(text: string): string {
+  const start = text.indexOf("{");
+  if (start === -1) return text;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+    } else if (ch === "\\") {
+      escaped = true;
+    } else if (ch === '"') {
+      inString = !inString;
+    } else if (!inString && ch === "{") {
+      depth++;
+    } else if (!inString && ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return text.slice(start);
+}
+
 function parseVerdict(text: string): Verdict {
   const cleaned = text
     .trim()
     .replace(/^```(?:json)?/i, "")
     .replace(/```$/, "")
     .trim();
-  const parsed = JSON.parse(cleaned) as Verdict;
+  let parsed: Verdict;
+  try {
+    parsed = JSON.parse(cleaned) as Verdict;
+  } catch {
+    try {
+      parsed = JSON.parse(extractJsonObject(cleaned)) as Verdict;
+    } catch {
+      throw new VerdictParseError(
+        cleaned
+          ? "The reviewer's reply was not valid JSON."
+          : "The reviewer returned an empty reply.",
+      );
+    }
+  }
   return {
     pass: Boolean(parsed.pass),
     score: Math.max(0, Math.min(100, Number(parsed.score) || 0)),
@@ -136,35 +182,47 @@ export async function runReview(
     text: { format: { type: "json_schema", name: "verdict", strict: true } },
   };
 
+  // The critic occasionally returns prose-wrapped or truncated JSON. Re-sample a
+  // couple of times before surfacing the failure — a fresh draw almost always
+  // comes back clean.
+  const MAX_VERDICT_ATTEMPTS = 3;
   let verdict: Verdict;
   let raw = "";
   let latency = 0;
   let runRef: string | undefined;
-  try {
-    const result = await runModelRequest({
-      model: settings.critic_model,
-      instructions: systemText,
-      input: userText,
-      reasoningEffort: "low",
-      jsonSchema: { name: "verdict", schema: VERDICT_SCHEMA as unknown as Record<string, unknown> },
-    });
-    raw = result.text;
-    latency = result.latencyMs;
-    runRef = result.runId;
-    verdict = parseVerdict(result.text);
-  } catch (error) {
-    const message = error instanceof ProviderError ? error.message : (error as Error).message;
-    await supabase.from("ai_calls").insert({
-      run_id: input.runId,
-      user_id: userId,
-      kind: "critic",
-      model: settings.critic_model,
-      system_text: systemText,
-      user_text: userText,
-      request_params: requestParams,
-      error_text: message,
-    });
-    throw new Error(message);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const result = await runModelRequest({
+        model: settings.critic_model,
+        instructions: systemText,
+        input: userText,
+        reasoningEffort: "low",
+        jsonSchema: {
+          name: "verdict",
+          schema: VERDICT_SCHEMA as unknown as Record<string, unknown>,
+        },
+      });
+      raw = result.text;
+      latency = result.latencyMs;
+      runRef = result.runId;
+      verdict = parseVerdict(result.text);
+      break;
+    } catch (error) {
+      if (error instanceof VerdictParseError && attempt < MAX_VERDICT_ATTEMPTS) continue;
+      const message = error instanceof ProviderError ? error.message : (error as Error).message;
+      await supabase.from("ai_calls").insert({
+        run_id: input.runId,
+        user_id: userId,
+        kind: "critic",
+        model: settings.critic_model,
+        system_text: systemText,
+        user_text: userText,
+        request_params: requestParams,
+        raw_response: raw || null,
+        error_text: message,
+      });
+      throw new Error(message);
+    }
   }
 
   const maxed = iterationNumber >= step.max_iterations;
