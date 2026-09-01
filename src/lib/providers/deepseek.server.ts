@@ -45,6 +45,12 @@ async function streamDeepseekOnce(
     stream: true,
     max_tokens: pickMaxTokens(req),
   };
+  // v4 is a reasoning model and its chain-of-thought counts against max_tokens.
+  // Passing this through lets the critic run with reasoning_effort "none" so the
+  // whole budget goes to the JSON answer instead of being eaten by CoT.
+  if (req.reasoningEffort) {
+    body["reasoning_effort"] = req.reasoningEffort;
+  }
   if (req.jsonSchema) {
     body["response_format"] = { type: "json_object" };
   }
@@ -117,17 +123,22 @@ async function streamDeepseekOnce(
     }
   }
 
-  // DeepSeek closes the SSE stream cleanly (done=true) even when the connection
-  // dropped mid-response — no error is thrown, we just have a partial body. The
-  // end-of-stream markers ([DONE] or a finish_reason) are the only signal that
-  // the model actually finished. Missing both means truncation: throw a
-  // "terminated" error so withTransientRetry re-runs it instead of returning
-  // half a JSON object.
+  // A dropped connection ends the SSE reader cleanly (done=true, no throw) with
+  // only a partial body. The completion markers ([DONE] / a finish_reason) are
+  // the only way to tell a finished response from a truncated one — without
+  // either, treat it as the transient network drop it is.
   if (!sawDone && !finishReason) {
     throw new Error("DeepSeek stream terminated before the response finished.");
   }
+  // Ran out of output budget mid-answer. With reasoning_effort tuned per role and
+  // max_tokens sized for it (see pickMaxTokens) this should not happen; surface
+  // it plainly rather than handing back half a JSON object.
   if (finishReason === "length") {
-    throw new ProviderError(500, "DeepSeek hit its output-token limit before finishing the reply.");
+    throw new ProviderError(
+      500,
+      "DeepSeek ran out of output tokens before finishing its reply. " +
+        "Lower reasoning_effort for this role or raise its max_tokens.",
+    );
   }
 
   return { text, reasoning, ...(runId ? { runId } : {}), latencyMs: Date.now() - started };

@@ -3,7 +3,8 @@ export type ProviderRequest = {
   model: string;
   instructions: string;
   input: string;
-  reasoningEffort?: "low" | "medium" | "high";
+  /** Maps straight to DeepSeek's `reasoning_effort`. "none" disables chain-of-thought entirely. */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
   jsonSchema?: { name: string; schema: Record<string, unknown> };
 };
 
