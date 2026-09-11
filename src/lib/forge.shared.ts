@@ -6,6 +6,8 @@
 // in the Settings dropdowns (kept here, not in the YAML, since this file is
 // imported directly by the client-side Settings dialog).
 
+import { dump as dumpYaml } from "js-yaml";
+
 export type TestStep = {
   id: string;
   name: string;
@@ -16,11 +18,31 @@ export type TestStep = {
   position: number;
 };
 
+/** A named critic + final-answer instruction pair. `owned` false = admin/global. */
+export type InstructionPreset = {
+  id: string;
+  name: string;
+  critic_instruction: string;
+  final_instruction: string;
+  owned: boolean;
+};
+
+/** A named, ordered list of test steps. `owned` false = admin/global. */
+export type TestSequence = {
+  id: string;
+  name: string;
+  owned: boolean;
+  steps: TestStep[];
+};
+
 export type Settings = {
   critic_instruction: string;
+  final_instruction: string;
   critic_model: string;
   final_model: string;
   debug_mode: boolean;
+  active_preset_id: string | null;
+  active_sequence_id: string | null;
 };
 
 export type Verdict = {
@@ -137,3 +159,72 @@ export const VERDICT_SCHEMA = {
 
 export const BETWEEN_TESTS_GUIDANCE =
   "Before the next test, rework your text: answer the open questions, restructure it, and tighten the paragraphs — shorter, without losing meaning.";
+
+// ---------------------------------------------------------------------------
+// Sharing: turn a preset or sequence into a portable YAML document + a
+// readable plain-text rendering, and build the mailto: link. All client-safe.
+// ---------------------------------------------------------------------------
+
+const YAML_OPTS = { lineWidth: 100, noRefs: true } as const;
+
+export function presetToYaml(preset: Pick<InstructionPreset, "name" | "critic_instruction" | "final_instruction">): string {
+  return dumpYaml(
+    {
+      kind: "instruction_preset",
+      name: preset.name,
+      critic_instruction: preset.critic_instruction,
+      final_instruction: preset.final_instruction,
+    },
+    YAML_OPTS,
+  );
+}
+
+export function sequenceToYaml(seq: { name: string; steps: Omit<TestStep, "id" | "position">[] }): string {
+  return dumpYaml(
+    {
+      kind: "test_sequence",
+      name: seq.name,
+      steps: seq.steps.map((s) => ({
+        name: s.name,
+        description: s.description,
+        instruction: s.instruction,
+        pass_threshold: s.pass_threshold,
+        max_iterations: s.max_iterations,
+      })),
+    },
+    YAML_OPTS,
+  );
+}
+
+export function buildShareText(
+  kind: "preset" | "sequence",
+  obj: { name: string; critic_instruction?: string; final_instruction?: string; steps?: TestStep[] },
+): string {
+  if (kind === "preset") {
+    return [
+      `Model instruction preset: ${obj.name}`,
+      "",
+      "── Critic instruction ──",
+      obj.critic_instruction ?? "",
+      "",
+      "── Final-answer instruction ──",
+      obj.final_instruction ?? "",
+    ].join("\n");
+  }
+  const lines = [`Test sequence: ${obj.name}`, ""];
+  (obj.steps ?? []).forEach((s, i) => {
+    lines.push(
+      `${String(i + 1).padStart(2, "0")}. ${s.name}` +
+        `  (pass ≥ ${s.pass_threshold}, max ${s.max_iterations} iterations)`,
+      s.description ? `    ${s.description}` : "",
+      `    ${s.instruction}`,
+      "",
+    );
+  });
+  return lines.filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n");
+}
+
+export function buildMailto(args: { to: string; subject: string; body: string }): string {
+  const params = new URLSearchParams({ subject: args.subject, body: args.body });
+  return `mailto:${encodeURIComponent(args.to)}?${params.toString()}`;
+}

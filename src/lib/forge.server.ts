@@ -15,38 +15,191 @@ type Client = {
   from: (table: string) => any;
 };
 
-export async function loadSettings(supabase: Client, userId: string): Promise<Settings> {
+const STEP_COLUMNS = "id, name, description, instruction, pass_threshold, max_iterations, position";
+
+type SettingsRow = {
+  critic_model: string;
+  final_model: string;
+  debug_mode: boolean;
+  active_preset_id: string | null;
+  active_sequence_id: string | null;
+};
+
+/**
+ * Create a user's personal "My instructions" preset + "My sequence" sequence
+ * from config/defaults.yaml and a settings row pointing at them. Idempotent-ish:
+ * only called when no settings row exists yet (fresh signup, or a legacy user
+ * the migration somehow missed).
+ */
+async function provisionWorkspace(supabase: Client, userId: string): Promise<SettingsRow> {
+  const config = await loadDefaultsConfig();
+
+  const { data: preset, error: presetErr } = await supabase
+    .from("instruction_presets")
+    .insert({
+      user_id: userId,
+      name: "My instructions",
+      critic_instruction: config.critic_instruction,
+      final_instruction: config.final_instructions,
+    })
+    .select("id")
+    .single();
+  if (presetErr) throw new Error(presetErr.message);
+
+  const { data: sequence, error: seqErr } = await supabase
+    .from("test_sequences")
+    .insert({ user_id: userId, name: "My sequence" })
+    .select("id")
+    .single();
+  if (seqErr) throw new Error(seqErr.message);
+
+  const { error: stepsErr } = await supabase.from("test_sequence_steps").insert(
+    config.test_steps.map((step, position) => ({ sequence_id: sequence.id, position, ...step })),
+  );
+  if (stepsErr) throw new Error(stepsErr.message);
+
+  const row: SettingsRow = {
+    critic_model: config.critic_model,
+    final_model: config.final_model,
+    debug_mode: config.debug_mode,
+    active_preset_id: preset.id,
+    active_sequence_id: sequence.id,
+  };
+  const { error: settingsErr } = await supabase
+    .from("settings")
+    .insert({ user_id: userId, ...row });
+  if (settingsErr) throw new Error(settingsErr.message);
+  return row;
+}
+
+async function loadSettingsRow(supabase: Client, userId: string): Promise<SettingsRow> {
   const { data, error } = await supabase
     .from("settings")
-    .select("critic_instruction, critic_model, final_model, debug_mode")
+    .select("critic_model, final_model, debug_mode, active_preset_id, active_sequence_id")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (data) return data as Settings;
-  const config = await loadDefaultsConfig();
-  const { data: created, error: insertError } = await supabase
-    .from("settings")
-    .insert({
-      user_id: userId,
-      critic_instruction: config.critic_instruction,
-      critic_model: config.critic_model,
-      final_model: config.final_model,
-      debug_mode: config.debug_mode,
-    })
-    .select("critic_instruction, critic_model, final_model, debug_mode")
-    .single();
-  if (insertError) throw new Error(insertError.message);
-  return created as Settings;
+  if (data) return data as SettingsRow;
+  return provisionWorkspace(supabase, userId);
 }
 
+/** Resolve the active preset's instruction text, falling back to global "Default". */
+async function loadActivePreset(
+  supabase: Client,
+  activePresetId: string | null,
+): Promise<{ critic_instruction: string; final_instruction: string }> {
+  if (activePresetId) {
+    const { data } = await supabase
+      .from("instruction_presets")
+      .select("critic_instruction, final_instruction")
+      .eq("id", activePresetId)
+      .maybeSingle();
+    if (data) return data as { critic_instruction: string; final_instruction: string };
+  }
+  const { data: fallback } = await supabase
+    .from("instruction_presets")
+    .select("critic_instruction, final_instruction")
+    .is("user_id", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (fallback) return fallback as { critic_instruction: string; final_instruction: string };
+  const config = await loadDefaultsConfig();
+  return {
+    critic_instruction: config.critic_instruction,
+    final_instruction: config.final_instructions,
+  };
+}
+
+export async function loadSettings(supabase: Client, userId: string): Promise<Settings> {
+  const row = await loadSettingsRow(supabase, userId);
+  const preset = await loadActivePreset(supabase, row.active_preset_id);
+  return {
+    critic_instruction: preset.critic_instruction,
+    final_instruction: preset.final_instruction,
+    critic_model: row.critic_model,
+    final_model: row.final_model,
+    debug_mode: row.debug_mode,
+    active_preset_id: row.active_preset_id,
+    active_sequence_id: row.active_sequence_id,
+  };
+}
+
+/** The steps of the user's active sequence, in order. */
 export async function loadSteps(supabase: Client, userId: string): Promise<TestStep[]> {
+  const row = await loadSettingsRow(supabase, userId);
+  return loadSequenceSteps(supabase, row.active_sequence_id);
+}
+
+async function loadSequenceSteps(
+  supabase: Client,
+  sequenceId: string | null,
+): Promise<TestStep[]> {
+  let seqId = sequenceId;
+  if (!seqId) {
+    const { data: fallback } = await supabase
+      .from("test_sequences")
+      .select("id")
+      .is("user_id", null)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    seqId = fallback?.id ?? null;
+  }
+  if (!seqId) return [];
   const { data, error } = await supabase
-    .from("test_steps")
-    .select("id, name, description, instruction, pass_threshold, max_iterations, position")
-    .eq("user_id", userId)
+    .from("test_sequence_steps")
+    .select(STEP_COLUMNS)
+    .eq("sequence_id", seqId)
     .order("position", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as TestStep[];
+}
+
+type PresetRow = {
+  id: string;
+  name: string;
+  critic_instruction: string;
+  final_instruction: string;
+  user_id: string | null;
+};
+
+type SequenceRow = {
+  id: string;
+  name: string;
+  user_id: string | null;
+  test_sequence_steps: TestStep[] | null;
+};
+
+/** Own + global presets, newest own first, for the Settings dialog. */
+export async function loadPresets(supabase: Client, userId: string) {
+  const { data, error } = await supabase
+    .from("instruction_presets")
+    .select("id, name, critic_instruction, final_instruction, user_id")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as PresetRow[]).map((p) => ({
+    id: p.id,
+    name: p.name,
+    critic_instruction: p.critic_instruction,
+    final_instruction: p.final_instruction,
+    owned: p.user_id === userId,
+  }));
+}
+
+/** Own + global sequences with their steps, for the Settings dialog. */
+export async function loadSequences(supabase: Client, userId: string) {
+  const { data, error } = await supabase
+    .from("test_sequences")
+    .select(`id, name, user_id, test_sequence_steps (${STEP_COLUMNS})`)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as SequenceRow[]).map((s) => ({
+    id: s.id,
+    name: s.name,
+    owned: s.user_id === userId,
+    steps: [...(s.test_sequence_steps ?? [])].sort((a, b) => a.position - b.position),
+  }));
 }
 
 export async function loadRun(supabase: Client, userId: string, runId: string) {
@@ -326,8 +479,7 @@ export async function skipStep(
 export async function runFinal(supabase: Client, userId: string, input: { runId: string }) {
   const { run, settings } = await loadRun(supabase, userId, input.runId);
   const prompt: string = run.current_prompt;
-  const config = await loadDefaultsConfig();
-  const finalInstructions = config.final_instructions;
+  const finalInstructions = settings.final_instruction;
 
   const requestParams = {
     stream: true,

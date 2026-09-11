@@ -145,21 +145,54 @@ export type Database = {
           },
         ];
       };
+      instruction_presets: {
+        Row: {
+          created_at: string;
+          critic_instruction: string;
+          final_instruction: string;
+          id: string;
+          name: string;
+          updated_at: string;
+          user_id: string | null;
+        };
+        Insert: {
+          created_at?: string;
+          critic_instruction: string;
+          final_instruction: string;
+          id?: string;
+          name: string;
+          updated_at?: string;
+          user_id?: string | null;
+        };
+        Update: {
+          created_at?: string;
+          critic_instruction?: string;
+          final_instruction?: string;
+          id?: string;
+          name?: string;
+          updated_at?: string;
+          user_id?: string | null;
+        };
+        Relationships: [];
+      };
       profiles: {
         Row: {
           created_at: string;
           display_name: string | null;
           id: string;
+          is_admin: boolean;
         };
         Insert: {
           created_at?: string;
           display_name?: string | null;
           id: string;
+          is_admin?: boolean;
         };
         Update: {
           created_at?: string;
           display_name?: string | null;
           id?: string;
+          is_admin?: boolean;
         };
         Relationships: [];
       };
@@ -210,8 +243,9 @@ export type Database = {
       };
       settings: {
         Row: {
+          active_preset_id: string | null;
+          active_sequence_id: string | null;
           created_at: string;
-          critic_instruction: string;
           critic_model: string;
           debug_mode: boolean;
           final_model: string;
@@ -219,8 +253,9 @@ export type Database = {
           user_id: string;
         };
         Insert: {
+          active_preset_id?: string | null;
+          active_sequence_id?: string | null;
           created_at?: string;
-          critic_instruction?: string;
           critic_model?: string;
           debug_mode?: boolean;
           final_model?: string;
@@ -228,17 +263,57 @@ export type Database = {
           user_id: string;
         };
         Update: {
+          active_preset_id?: string | null;
+          active_sequence_id?: string | null;
           created_at?: string;
-          critic_instruction?: string;
           critic_model?: string;
           debug_mode?: boolean;
           final_model?: string;
           updated_at?: string;
           user_id?: string;
         };
+        Relationships: [
+          {
+            foreignKeyName: "settings_active_preset_id_fkey";
+            columns: ["active_preset_id"];
+            isOneToOne: false;
+            referencedRelation: "instruction_presets";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "settings_active_sequence_id_fkey";
+            columns: ["active_sequence_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      test_sequences: {
+        Row: {
+          created_at: string;
+          id: string;
+          name: string;
+          updated_at: string;
+          user_id: string | null;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          name: string;
+          updated_at?: string;
+          user_id?: string | null;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          name?: string;
+          updated_at?: string;
+          user_id?: string | null;
+        };
         Relationships: [];
       };
-      test_steps: {
+      test_sequence_steps: {
         Row: {
           created_at: string;
           description: string;
@@ -248,7 +323,7 @@ export type Database = {
           name: string;
           pass_threshold: number;
           position: number;
-          user_id: string;
+          sequence_id: string;
         };
         Insert: {
           created_at?: string;
@@ -259,7 +334,7 @@ export type Database = {
           name: string;
           pass_threshold?: number;
           position?: number;
-          user_id: string;
+          sequence_id: string;
         };
         Update: {
           created_at?: string;
@@ -270,9 +345,17 @@ export type Database = {
           name?: string;
           pass_threshold?: number;
           position?: number;
-          user_id?: string;
+          sequence_id?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "test_sequence_steps_sequence_id_fkey";
+            columns: ["sequence_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+        ];
       };
     };
     Views: {

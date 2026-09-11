@@ -157,7 +157,10 @@ function Home() {
           open={settingsOpen}
           onOpenChange={setSettingsOpen}
           settings={workspace.data.settings}
-          steps={workspace.data.steps}
+          presets={workspace.data.presets}
+          sequences={workspace.data.sequences}
+          shareRecipient={workspace.data.shareRecipient}
+          isAdmin={workspace.data.isAdmin}
         />
       )}
     </main>

@@ -20,6 +20,16 @@ final_model: anthropic/claude-opus-5
 
 debug_mode: false
 
+# Where "Share via email" pre-fills the recipient. The Settings dialog lets the
+# user change it per-share; this is just the default and the one-click target.
+share_default_recipient: davoud@taghawi-nejad.de
+
+# Accounts allowed to create/edit the shared "General" instruction presets and
+# test sequences (the rows with no owner). Matched against the signed-in user's
+# email; a match also flips profiles.is_admin on next load.
+admin_emails:
+  - davoud@taghawi-nejad.de
+
 searchable_facts_rule: >-
   SEARCHABLE FACTS: Never ask for facts that are publicly searchable or inferable
   from something the author already named. If an event, work, product, person,

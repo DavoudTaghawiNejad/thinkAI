@@ -15,6 +15,8 @@ const DefaultsConfigFileSchema = z.object({
   critic_model: z.string().min(1),
   final_model: z.string().min(1),
   debug_mode: z.boolean(),
+  share_default_recipient: z.string().min(1),
+  admin_emails: z.array(z.string().min(1)).default([]),
   searchable_facts_rule: z.string().min(1),
   critic_instruction: z.string().min(1),
   final_instructions: z.string().min(1),
