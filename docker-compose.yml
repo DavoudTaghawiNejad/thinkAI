@@ -17,11 +17,11 @@ services:
     depends_on:
       - gateway
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     restart: unless-stopped
 
   db:
-    container_name: prompt-forge-db
+    container_name: ${DB_CONTAINER_NAME:-prompt-forge-db}
     image: supabase/postgres:17.6.1.136
     restart: unless-stopped
     volumes:
@@ -53,7 +53,7 @@ services:
       ]
 
   auth:
-    container_name: prompt-forge-auth
+    container_name: ${AUTH_CONTAINER_NAME:-prompt-forge-auth}
     image: supabase/gotrue:v2.189.0
     restart: unless-stopped
     depends_on:
@@ -88,7 +88,7 @@ services:
       GOTRUE_SMS_AUTOCONFIRM: "false"
 
   rest:
-    container_name: prompt-forge-rest
+    container_name: ${REST_CONTAINER_NAME:-prompt-forge-rest}
     image: postgrest/postgrest:v14.12
     restart: unless-stopped
     depends_on:
@@ -107,7 +107,7 @@ services:
     command: ["postgrest"]
 
   gateway:
-    container_name: prompt-forge-gateway
+    container_name: ${GATEWAY_CONTAINER_NAME:-prompt-forge-gateway}
     image: nginx:alpine
     restart: unless-stopped
     depends_on:
@@ -116,7 +116,7 @@ services:
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
 
 volumes:
   db-data:
