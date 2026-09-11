@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # First-install setup: generates secrets, brings up Postgres, applies the schema
-# (supabase/migrations/*.sql, in order) and the invite-key seed if present, then
-# starts the full stack. Not idempotent against an already-migrated database —
-# this applies raw CREATE TABLE migrations, so re-running against an existing
-# schema will fail. To start over, `docker compose down -v` first.
+# and the invite-key seed if present, then starts the full stack.
+#
+# FIRST INSTALL ONLY. It refuses to run against a database that already has the
+# app schema — to apply schema changes to a running environment use
+# scripts/migrate.sh, which tracks what it has already applied. To start over
+# from nothing, `docker compose down -v` first (that DESTROYS the stack's data).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -68,11 +70,18 @@ until [ "$(docker compose ps -q db | xargs docker inspect -f '{{.State.Health.St
   sleep 2
 done
 
+# Refuse to touch an environment that is already set up — re-running the
+# migrations over a live schema used to abort halfway and leave a mess.
+existing="$(docker compose exec -T db psql -U postgres -d postgres -tAc \
+  "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'" | tr -d '[:space:]')"
+if [ "${existing:-0}" != "0" ]; then
+  echo "Refusing: this database already has $existing table(s) in 'public'." >&2
+  echo "          Use scripts/migrate.sh to apply schema changes instead." >&2
+  exit 1
+fi
+
 echo "==> Applying schema"
-for f in supabase/migrations/*.sql; do
-  echo "  - $f"
-  docker compose exec -T db psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$f"
-done
+scripts/migrate.sh
 
 if [ -f supabase/seed-invite-keys.sql ]; then
   echo "==> Seeding invite keys"
@@ -82,5 +91,8 @@ fi
 echo "==> Starting the full stack"
 docker compose up -d --build
 
-echo "==> Done. App listening on 127.0.0.1:3000, gateway (auth+rest) on 127.0.0.1:8000."
+# These fall back to the production values, same as docker-compose.yml does.
+app_port="$(get_env_var APP_PORT)"; app_port="${app_port:-3000}"
+gateway_port="$(get_env_var GATEWAY_PORT)"; gateway_port="${gateway_port:-8000}"
+echo "==> Done. App listening on 127.0.0.1:${app_port}, gateway (auth+rest) on 127.0.0.1:${gateway_port}."
 echo "    Point Apache at both — see deploy/apache-thinkAI.conf."

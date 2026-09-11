@@ -31,3 +31,9 @@ dist-ssr
 # Invitation keys — generated secrets, never commit
 invite-keys.txt
 supabase/seed-invite-keys.sql
+
+# Per-checkout instructions (the production checkout has its own)
+CLAUDE.local.md
+
+# Database dumps taken before migrations
+backups/
