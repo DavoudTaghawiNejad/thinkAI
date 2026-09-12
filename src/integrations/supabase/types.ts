@@ -181,6 +181,7 @@ export type Database = {
           display_name: string;
           id: string;
           intro_seen_at: string | null;
+          intro_shown_at: string | null;
           is_admin: boolean;
         };
         Insert: {
@@ -188,6 +189,7 @@ export type Database = {
           display_name?: string;
           id: string;
           intro_seen_at?: string | null;
+          intro_shown_at?: string | null;
           is_admin?: boolean;
         };
         Update: {
@@ -195,6 +197,7 @@ export type Database = {
           display_name?: string;
           id?: string;
           intro_seen_at?: string | null;
+          intro_shown_at?: string | null;
           is_admin?: boolean;
         };
         Relationships: [];

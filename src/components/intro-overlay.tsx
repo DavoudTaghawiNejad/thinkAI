@@ -39,10 +39,17 @@ const SLIDES: { lines: string[] }[] = [
 
 export function IntroOverlay({
   open,
+  firstShowing,
   onClose,
   onRetire,
 }: {
   open: boolean;
+  /**
+   * True if this profile has never been shown the slides. On a first showing
+   * the way out waits for the last slide — after the case has been made, not
+   * instead of hearing it. Anyone meeting it again can leave from any slide.
+   */
+  firstShowing: boolean;
   /** Put it away for this visit. It greets them again next time. */
   onClose: () => void;
   /** Put it away for good — the only thing that stops it coming back. */
@@ -51,6 +58,7 @@ export function IntroOverlay({
   const [index, setIndex] = useState(0);
   const advance = useRef<HTMLButtonElement>(null);
   const last = index === SLIDES.length - 1;
+  const canRetire = last || !firstShowing;
 
   // A reopened overlay starts at the beginning rather than wherever it was left.
   useEffect(() => {
@@ -104,13 +112,15 @@ export function IntroOverlay({
             <span className="font-mono text-xs uppercase tracking-[0.35em] text-primary">
               thinkAI
             </span>
-            <button
-              type="button"
-              onClick={onRetire}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              Do not show again
-            </button>
+            {canRetire && (
+              <button
+                type="button"
+                onClick={onRetire}
+                className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                Do not show again
+              </button>
+            )}
           </div>
 
           <DialogTitle className="sr-only">What thinkAI is for</DialogTitle>

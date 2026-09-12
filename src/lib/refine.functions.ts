@@ -18,7 +18,7 @@ export const getWorkspace = createServerFn({ method: "GET" })
       loadDefaultsConfig(),
       context.supabase
         .from("profiles")
-        .select("display_name, intro_seen_at")
+        .select("display_name, intro_seen_at, intro_shown_at")
         .eq("id", context.userId)
         .maybeSingle(),
     ]);
@@ -30,6 +30,9 @@ export const getWorkspace = createServerFn({ method: "GET" })
       // profile row counts as seen: better to show nothing than to greet
       // someone repeatedly because the row could not be read.
       introSeen: profile.data ? profile.data.intro_seen_at !== null : true,
+      // Whether they have met the introduction before. It decides how soon the
+      // way out of it is offered, not whether it is shown.
+      introShown: profile.data ? profile.data.intro_shown_at !== null : true,
       // What to greet them with. Every profile has a name — signup asks for one,
       // and the column falls back to the email's local part — so this is empty
       // only if the row could not be read at all.
@@ -54,6 +57,23 @@ export const markIntroSeen = createServerFn({ method: "POST" })
       .update({ intro_seen_at: new Date().toISOString() })
       .eq("id", context.userId)
       .is("intro_seen_at", null);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+/**
+ * Note that the introduction has been put in front of this profile. Written the
+ * first time it opens and never again — `.is(..., null)` keeps the original
+ * timestamp, so "has seen it before" stays true from then on.
+ */
+export const markIntroShown = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ intro_shown_at: new Date().toISOString() })
+      .eq("id", context.userId)
+      .is("intro_shown_at", null);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

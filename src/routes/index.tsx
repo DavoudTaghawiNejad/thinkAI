@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Settings2, LogOut, ArrowRight, Trash2, Info } from "lucide-react";
@@ -25,6 +25,7 @@ import {
   getWorkspace,
   listRuns,
   markIntroSeen,
+  markIntroShown,
 } from "@/lib/refine.functions";
 
 export const Route = createFileRoute("/")({
@@ -101,6 +102,24 @@ function Home() {
   });
   const introOpen =
     introReplay || (Boolean(workspace.data && !workspace.data.introSeen) && !introClosed);
+
+  // Whether this is their first time through, fixed at the moment it opens: the
+  // write below makes the server say "shown" straight away, and the slides
+  // should not change shape under the reader mid-deck.
+  const noteIntroShown = useMutation({ mutationFn: () => markIntroShown() });
+  const openedIntroBefore = useRef(false);
+  const [firstShowing, setFirstShowing] = useState(false);
+  useEffect(() => {
+    if (!introOpen || !workspace.data) return;
+    // Reopening it from Show intro is not a first showing either, even before
+    // the workspace has refetched.
+    const first = !workspace.data.introShown && !openedIntroBefore.current;
+    openedIntroBefore.current = true;
+    setFirstShowing(first);
+    if (first) noteIntroShown.mutate();
+    // Once per opening; the mutation is a no-op after the first timestamp.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [introOpen, workspace.data?.introShown]);
 
   const start = useMutation({
     mutationFn: () => createRun({ data: { prompt, sequenceId } }),
@@ -250,6 +269,7 @@ function Home() {
 
       <IntroOverlay
         open={introOpen}
+        firstShowing={firstShowing}
         onClose={() => {
           setIntroReplay(false);
           setIntroClosed(true);
