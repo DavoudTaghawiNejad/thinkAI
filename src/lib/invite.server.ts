@@ -6,6 +6,7 @@ export async function redeemInviteAndCreateUser(input: {
   email: string;
   password: string;
   key: string;
+  displayName: string;
 }) {
   const { data: deleted, error: delErr } = await supabaseAdmin
     .from("invite_keys")
@@ -16,10 +17,13 @@ export async function redeemInviteAndCreateUser(input: {
   if (delErr) throw new Error(delErr.message);
   if (!deleted) throw new Error("Invalid or already-used invitation key.");
 
+  // handle_new_user() reads display_name out of this metadata, so the name they
+  // typed is on the profile from the moment it exists.
   const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
     email: input.email,
     password: input.password,
     email_confirm: true,
+    user_metadata: { display_name: input.displayName },
   });
   if (createErr) throw new Error(createErr.message);
 
@@ -30,6 +34,12 @@ export async function redeemInviteAndCreateUser(input: {
   // general sequence an admin marked for new profiles.
   const config = await loadDefaultsConfig();
   const userId = created.user.id;
+
+  // They named themselves on the signup form, so there is nothing left to ask.
+  await supabaseAdmin
+    .from("profiles")
+    .update({ display_name: input.displayName, display_name_confirmed: true })
+    .eq("id", userId);
 
   await supabaseAdmin.from("settings").insert({
     user_id: userId,

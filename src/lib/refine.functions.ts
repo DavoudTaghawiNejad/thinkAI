@@ -18,7 +18,7 @@ export const getWorkspace = createServerFn({ method: "GET" })
       loadDefaultsConfig(),
       context.supabase
         .from("profiles")
-        .select("intro_seen_at")
+        .select("display_name, display_name_confirmed, intro_seen_at")
         .eq("id", context.userId)
         .maybeSingle(),
     ]);
@@ -30,6 +30,11 @@ export const getWorkspace = createServerFn({ method: "GET" })
       // profile row counts as seen: better to show nothing than to greet
       // someone repeatedly because the row could not be read.
       introSeen: profile.data ? profile.data.intro_seen_at !== null : true,
+      // What to greet them with, and whether they have ever been asked. An
+      // unconfirmed name is a guess made at signup — worth showing, and worth
+      // asking about once.
+      displayName: profile.data?.display_name ?? null,
+      nameConfirmed: profile.data ? profile.data.display_name_confirmed : true,
       // Sharing aims at the admin by default, so adding or changing one moves
       // the target with it. share_default_recipient is the fallback for a config
       // that lists no admin_emails.
@@ -50,6 +55,25 @@ export const markIntroSeen = createServerFn({ method: "POST" })
       .update({ intro_seen_at: new Date().toISOString() })
       .eq("id", context.userId)
       .is("intro_seen_at", null);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+/**
+ * Record the name the profile chose for itself. Confirming it is the point of
+ * the write: from here on the name is theirs, not a guess from their email, and
+ * they are not asked again.
+ */
+export const saveDisplayName = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z.object({ displayName: z.string().trim().min(1).max(80) }).parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ display_name: data.displayName, display_name_confirmed: true })
+      .eq("id", context.userId);
     if (error) throw new Error(error.message);
     return { ok: true };
   });

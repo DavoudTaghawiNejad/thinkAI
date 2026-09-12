@@ -36,6 +36,7 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [inviteKey, setInviteKey] = useState("");
+  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -47,7 +48,7 @@ function AuthPage() {
     setBusy(true);
     try {
       if (mode === "signup") {
-        await signUpWithInvite({ data: { email, password, key: inviteKey } });
+        await signUpWithInvite({ data: { email, password, key: inviteKey, displayName: name } });
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         toast.success("Account created. You're signed in.");
@@ -101,17 +102,31 @@ function AuthPage() {
             />
           </div>
           {mode === "signup" && (
-            <div className="space-y-1.5">
-              <Label htmlFor="inviteKey">Invitation key</Label>
-              <Input
-                id="inviteKey"
-                value={inviteKey}
-                required
-                minLength={8}
-                maxLength={8}
-                onChange={(e) => setInviteKey(e.target.value)}
-              />
-            </div>
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="name">Your name</Label>
+                <Input
+                  id="name"
+                  value={name}
+                  required
+                  maxLength={80}
+                  autoComplete="name"
+                  placeholder="What should we call you?"
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="inviteKey">Invitation key</Label>
+                <Input
+                  id="inviteKey"
+                  value={inviteKey}
+                  required
+                  minLength={8}
+                  maxLength={8}
+                  onChange={(e) => setInviteKey(e.target.value)}
+                />
+              </div>
+            </>
           )}
           <Button type="submit" className="w-full" disabled={busy}>
             {mode === "signin" ? "Sign in" : "Sign up"}

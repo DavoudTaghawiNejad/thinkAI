@@ -8,6 +8,7 @@ export const signUpWithInvite = createServerFn({ method: "POST" })
         email: z.string().email(),
         password: z.string().min(6),
         key: z.string().length(8),
+        displayName: z.string().trim().min(1).max(80),
       })
       .parse(d),
   )

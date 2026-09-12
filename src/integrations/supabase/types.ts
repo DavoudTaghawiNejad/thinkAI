@@ -179,6 +179,7 @@ export type Database = {
         Row: {
           created_at: string;
           display_name: string | null;
+          display_name_confirmed: boolean;
           id: string;
           intro_seen_at: string | null;
           is_admin: boolean;
@@ -186,6 +187,7 @@ export type Database = {
         Insert: {
           created_at?: string;
           display_name?: string | null;
+          display_name_confirmed?: boolean;
           id: string;
           intro_seen_at?: string | null;
           is_admin?: boolean;
@@ -193,6 +195,7 @@ export type Database = {
         Update: {
           created_at?: string;
           display_name?: string | null;
+          display_name_confirmed?: boolean;
           id?: string;
           intro_seen_at?: string | null;
           is_admin?: boolean;

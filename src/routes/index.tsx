@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Settings2, LogOut, ArrowRight, Trash2 } from "lucide-react";
+import { Settings2, LogOut, ArrowRight, Trash2, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
@@ -19,12 +19,14 @@ import {
 } from "@/components/ui/select";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { IntroOverlay } from "@/components/intro-overlay";
+import { NameDialog } from "@/components/name-dialog";
 import {
   createRun,
   deleteRun,
   getWorkspace,
   listRuns,
   markIntroSeen,
+  saveDisplayName,
 } from "@/lib/refine.functions";
 
 export const Route = createFileRoute("/")({
@@ -57,6 +59,8 @@ function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sequenceId, setSequenceId] = useState<string | null>(null);
   const [introDismissed, setIntroDismissed] = useState(false);
+  const [introReplay, setIntroReplay] = useState(false);
+  const [nameAnswered, setNameAnswered] = useState(false);
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth" });
@@ -98,7 +102,22 @@ function Home() {
     mutationFn: () => markIntroSeen(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["workspace"] }),
   });
-  const introOpen = Boolean(workspace.data && !workspace.data.introSeen) && !introDismissed;
+
+  // Ask for a name before anything else: the introduction is a better greeting
+  // once there is someone to greet.
+  const nameOpen = Boolean(workspace.data && !workspace.data.nameConfirmed) && !nameAnswered;
+  const saveName = useMutation({
+    mutationFn: (displayName: string) => saveDisplayName({ data: { displayName } }),
+    onSuccess: () => {
+      setNameAnswered(true);
+      queryClient.invalidateQueries({ queryKey: ["workspace"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const introOpen =
+    introReplay ||
+    (Boolean(workspace.data && !workspace.data.introSeen) && !introDismissed && !nameOpen);
 
   const start = useMutation({
     mutationFn: () => createRun({ data: { prompt, sequenceId } }),
@@ -130,7 +149,15 @@ function Home() {
             Refine the question before you ask it.
           </h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {workspace.data?.displayName && (
+            <span className="mr-1 hidden max-w-[12rem] truncate text-sm text-muted-foreground sm:block">
+              {workspace.data.displayName}
+            </span>
+          )}
+          <Button variant="outline" size="sm" onClick={() => setIntroReplay(true)}>
+            <Info className="mr-2 h-4 w-4" /> Show intro
+          </Button>
           {workspace.data && (
             <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
               <Settings2 className="mr-2 h-4 w-4" /> Settings
@@ -238,10 +265,20 @@ function Home() {
         </ul>
       </section>
 
+      <NameDialog
+        open={nameOpen}
+        suggestion={workspace.data?.displayName ?? null}
+        saving={saveName.isPending}
+        onSave={(name) => saveName.mutate(name)}
+      />
+
       <IntroOverlay
         open={introOpen}
         onDone={() => {
+          setIntroReplay(false);
           setIntroDismissed(true);
+          // Replaying it deliberately is not the first time; the marker is
+          // already written and the call below is a no-op.
           dismissIntro.mutate();
         }}
       />
