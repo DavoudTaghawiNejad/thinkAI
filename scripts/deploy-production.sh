@@ -19,5 +19,13 @@ fi
 
 git pull origin production
 scripts/migrate.sh
+
+# Belt and braces: migrate.sh reports what it applied, but a run that somehow
+# ends up reading the ledger as complete exits 0 having applied nothing, and
+# rebuilding on top of that puts new code in front of an old schema. --check
+# re-reads the ledger and fails if anything is still pending, so the app is only
+# ever rebuilt once the schema is actually caught up.
+scripts/migrate.sh --check
+
 docker compose up -d --build thought-refiner
 echo "Production now running $(git rev-parse --short HEAD)"

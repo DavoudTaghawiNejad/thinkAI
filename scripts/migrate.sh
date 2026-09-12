@@ -8,6 +8,8 @@
 #
 #   scripts/migrate.sh                      apply everything pending
 #   scripts/migrate.sh --dry-run            list what would be applied
+#   scripts/migrate.sh --check              exit non-zero if anything is pending,
+#                                           applying nothing (deploy gate)
 #   scripts/migrate.sh --baseline-through F record migrations up to and
 #                                           including F as applied, WITHOUT
 #                                           running them (for databases that
@@ -21,11 +23,13 @@ cd "$(dirname "$0")/.."
 
 KEEP_DUMPS=10
 DRY_RUN=false
+CHECK=false
 BASELINE_THROUGH=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=true; shift ;;
+    --check) CHECK=true; shift ;;
     --baseline-through)
       BASELINE_THROUGH="${2:-}"
       [ -n "$BASELINE_THROUGH" ] || { echo "--baseline-through needs a filename" >&2; exit 1; }
@@ -89,6 +93,11 @@ fi
 
 echo "==> ${#pending[@]} migration(s) pending:"
 for f in "${pending[@]}"; do echo "  - $(basename "$f")"; done
+
+if [ "$CHECK" = true ]; then
+  echo "==> --check: the database is behind the migrations in $(pwd); nothing applied." >&2
+  exit 1
+fi
 
 if [ "$DRY_RUN" = true ]; then
   echo "==> --dry-run, stopping here."
