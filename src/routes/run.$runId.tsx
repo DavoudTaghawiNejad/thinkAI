@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Bug, Check, SkipForward, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Bug, Check, Copy, SkipForward, Sparkles, X } from "lucide-react";
 import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -100,6 +100,48 @@ function QuestionItem({
         <X className="h-4 w-4" />
       </Button>
     </li>
+  );
+}
+
+/**
+ * Copies text to the system clipboard, and says so for a moment afterwards.
+ *
+ * The async Clipboard API needs a secure context (https, or localhost); the
+ * hidden-textarea fallback is what keeps this working anywhere else, and a
+ * failure is reported rather than passing silently for something whose whole
+ * point is invisible.
+ */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(area);
+        if (!ok) throw new Error("The browser refused the copy.");
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      toast.error(`Could not copy: ${(error as Error).message}`);
+    }
+  }
+
+  return (
+    <Button variant="outline" onClick={copy} disabled={!text.trim()}>
+      {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+      {copied ? "Copied" : label}
+    </Button>
   );
 }
 
@@ -317,6 +359,7 @@ function Workbench() {
                 <Sparkles className="mr-2 h-4 w-4" />
                 {finalize.isPending ? "Thinking…" : `Send to ${settings.final_model}`}
               </Button>
+              <CopyButton text={draft} label="Copy prompt" />
               <span className="text-xs text-muted-foreground">
                 All tests complete. This can take a few minutes.
               </span>
