@@ -21,10 +21,7 @@ const SLIDES: { lines: string[] }[] = [
     lines: ["Without deep thought there is no success, no new ideas, no progress."],
   },
   {
-    lines: [
-      "Instead of chatting with the AI:",
-      "refine your question, and refine your brain, with thinkAI.",
-    ],
+    lines: ["Instead of chatting with the AI:", "refine your question, and refine your brain."],
   },
   {
     lines: [
@@ -36,10 +33,7 @@ const SLIDES: { lines: string[] }[] = [
     ],
   },
   {
-    lines: ["In addition to the answer, you will have clarity."],
-  },
-  {
-    lines: ["The process is tedious,", "but your brain does not rot."],
+    lines: ["The process is tedious, but your brain does not rot."],
   },
 ];
 
