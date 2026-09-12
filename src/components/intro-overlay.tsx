@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -49,12 +49,20 @@ export function IntroOverlay({
   onRetire: () => void;
 }) {
   const [index, setIndex] = useState(0);
+  const advance = useRef<HTMLButtonElement>(null);
   const last = index === SLIDES.length - 1;
 
   // A reopened overlay starts at the beginning rather than wherever it was left.
   useEffect(() => {
     if (open) setIndex(0);
   }, [open]);
+
+  // Keep the focus ring on Next (and on Start refining, on the last slide) as
+  // the slides go by, so the way forward is what Enter and a visible ring land
+  // on — never "Do not show again".
+  useEffect(() => {
+    if (open) advance.current?.focus();
+  }, [open, index]);
 
   // Arrow keys page through it; Enter advances, and finishes on the last slide.
   useEffect(() => {
@@ -84,7 +92,13 @@ export function IntroOverlay({
         if (!next) onClose();
       }}
     >
-      <DialogContent className="max-w-xl gap-0 p-0 [&>button]:hidden">
+      <DialogContent
+        className="max-w-xl gap-0 p-0 [&>button]:hidden"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          advance.current?.focus();
+        }}
+      >
         <div className="flex min-h-[22rem] flex-col">
           <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
             <span className="font-mono text-xs uppercase tracking-[0.35em] text-primary">
@@ -93,7 +107,7 @@ export function IntroOverlay({
             <button
               type="button"
               onClick={onRetire}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               Do not show again
             </button>
@@ -135,11 +149,11 @@ export function IntroOverlay({
             </div>
 
             {last ? (
-              <Button size="sm" onClick={onClose}>
+              <Button ref={advance} size="sm" onClick={onClose}>
                 Start refining <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
-              <Button size="sm" onClick={() => setIndex((i) => i + 1)}>
+              <Button ref={advance} size="sm" onClick={() => setIndex((i) => i + 1)}>
                 Next <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             )}
