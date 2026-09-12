@@ -12,20 +12,46 @@ export const getWorkspace = createServerFn({ method: "GET" })
     // has to finish before the lists are read — the sequence list is keyed on
     // the default it establishes.
     const settings = await loadSettings(context.supabase as never, context.userId);
-    const [sequences, admin, config] = await Promise.all([
+    const [sequences, admin, config, profile] = await Promise.all([
       loadSequences(context.supabase as never, context.userId, settings.default_sequence_id),
       resolveAdmin(context.userId, context.claims as never),
       loadDefaultsConfig(),
+      context.supabase
+        .from("profiles")
+        .select("intro_seen_at")
+        .eq("id", context.userId)
+        .maybeSingle(),
     ]);
     return {
       settings,
       sequences,
       isAdmin: admin.isAdmin,
+      // The introduction is for a profile that has never seen it. A missing
+      // profile row counts as seen: better to show nothing than to greet
+      // someone repeatedly because the row could not be read.
+      introSeen: profile.data ? profile.data.intro_seen_at !== null : true,
       // Sharing aims at the admin by default, so adding or changing one moves
       // the target with it. share_default_recipient is the fallback for a config
       // that lists no admin_emails.
       shareRecipient: config.admin_emails[0] ?? config.share_default_recipient,
     };
+  });
+
+/**
+ * Note that this profile has seen the introduction, so it is not shown again.
+ * Recorded once, on the profile: dismissing it on one device dismisses it
+ * everywhere. Idempotent — a second call keeps the first timestamp.
+ */
+export const markIntroSeen = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { error } = await context.supabase
+      .from("profiles")
+      .update({ intro_seen_at: new Date().toISOString() })
+      .eq("id", context.userId)
+      .is("intro_seen_at", null);
+    if (error) throw new Error(error.message);
+    return { ok: true };
   });
 
 export const listRuns = createServerFn({ method: "GET" })

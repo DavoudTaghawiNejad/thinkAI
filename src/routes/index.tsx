@@ -18,7 +18,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { createRun, deleteRun, getWorkspace, listRuns } from "@/lib/refine.functions";
+import { IntroOverlay } from "@/components/intro-overlay";
+import {
+  createRun,
+  deleteRun,
+  getWorkspace,
+  listRuns,
+  markIntroSeen,
+} from "@/lib/refine.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -49,6 +56,7 @@ function Home() {
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sequenceId, setSequenceId] = useState<string | null>(null);
+  const [introDismissed, setIntroDismissed] = useState(false);
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth" });
@@ -82,6 +90,15 @@ function Home() {
       );
     });
   }, [workspace.data, sequences]);
+
+  // Greet a profile that has never seen the introduction. The marker is written
+  // on the profile, but it is the local dismissal that closes the overlay, so a
+  // failed write cannot leave it standing.
+  const dismissIntro = useMutation({
+    mutationFn: () => markIntroSeen(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+  });
+  const introOpen = Boolean(workspace.data && !workspace.data.introSeen) && !introDismissed;
 
   const start = useMutation({
     mutationFn: () => createRun({ data: { prompt, sequenceId } }),
@@ -220,6 +237,14 @@ function Home() {
           )}
         </ul>
       </section>
+
+      <IntroOverlay
+        open={introOpen}
+        onDone={() => {
+          setIntroDismissed(true);
+          dismissIntro.mutate();
+        }}
+      />
 
       {workspace.data && (
         <SettingsDialog
