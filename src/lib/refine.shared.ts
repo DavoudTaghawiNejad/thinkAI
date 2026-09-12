@@ -104,6 +104,13 @@ export type RunRow = {
   final_answer: string | null;
   final_model: string | null;
   final_prompt: string | null;
+  /**
+   * Questions the author has deliberately left open, keyed by their exact text
+   * — the critic's questions are plain strings with no id of their own. Set for
+   * the whole run: once marked, a question is carried into every later
+   * submission, in this test and all the ones after it.
+   */
+  open_questions: string[];
   created_at: string;
   updated_at: string;
 };
@@ -138,6 +145,30 @@ export const FINAL_MODELS = [
   "anthropic/claude-sonnet-5",
   "deepseek/deepseek-reasoner",
 ] as const;
+
+/**
+ * The critic instruction as actually sent: the sequence's own wording, plus the
+ * questions the author has marked intentionally open in this run.
+ *
+ * The list goes here rather than into the user message because the rule that
+ * governs it — "when questions are intentionally left open, ignore them for the
+ * test scoring and do not ask questions about them" — is part of the critic
+ * instruction, written there by an admin. Keeping the rule and the questions it
+ * refers to in one message saves the model an indirection, and "ignore these for
+ * scoring" is a standing constraint, which is what the instruction is for.
+ */
+export function composeCriticInstruction(args: {
+  criticInstruction: string;
+  openQuestions: string[];
+}): string {
+  if (args.openQuestions.length === 0) return args.criticInstruction;
+  return [
+    args.criticInstruction,
+    "",
+    "INTENTIONALLY LEFT OPEN — the author has deliberately left these questions open:",
+    ...args.openQuestions.map((q) => `- ${q}`),
+  ].join("\n");
+}
 
 /** The exact user-message text sent to the critic. History is never included. */
 export function buildCriticUserText(args: {

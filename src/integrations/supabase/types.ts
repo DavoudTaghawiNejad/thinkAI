@@ -204,6 +204,7 @@ export type Database = {
           final_model: string | null;
           final_prompt: string | null;
           id: string;
+          open_questions: Json;
           original_prompt: string;
           sequence_id: string | null;
           status: string;
@@ -219,6 +220,7 @@ export type Database = {
           final_model?: string | null;
           final_prompt?: string | null;
           id?: string;
+          open_questions?: Json;
           original_prompt: string;
           sequence_id?: string | null;
           status?: string;
@@ -234,6 +236,7 @@ export type Database = {
           final_model?: string | null;
           final_prompt?: string | null;
           id?: string;
+          open_questions?: Json;
           original_prompt?: string;
           sequence_id?: string | null;
           status?: string;

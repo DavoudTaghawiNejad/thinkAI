@@ -3,6 +3,7 @@ import { loadDefaultsConfig } from "./defaults-config.server";
 import { seedSequencesForUser } from "./sequences.server";
 import {
   buildCriticUserText,
+  composeCriticInstruction,
   VERDICT_SCHEMA,
   type Settings,
   type TestStep,
@@ -319,7 +320,10 @@ export async function runReview(
     .eq("skipped", false);
   const iterationNumber = (count ?? 0) + 1;
 
-  const systemText = instructions.critic_instruction;
+  const systemText = composeCriticInstruction({
+    criticInstruction: instructions.critic_instruction,
+    openQuestions: run.open_questions ?? [],
+  });
   const userText = buildCriticUserText({
     stepName: step.name,
     stepDescription: step.description,
@@ -477,6 +481,43 @@ export async function skipStep(
     .eq("user_id", userId);
 
   return { reachedEnd: done };
+}
+
+/**
+ * Mark one of the critic's questions as intentionally left open, or take the
+ * mark off again. The list is a set keyed by the question's exact text, since
+ * questions are plain strings inside the iteration's JSONB and have no id to key
+ * on; re-asking the same question verbatim therefore finds it still marked.
+ *
+ * Read-modify-write: the author toggles one question at a time by hand, so there
+ * is nothing here to race.
+ */
+export async function setQuestionOpen(
+  supabase: Client,
+  userId: string,
+  input: { runId: string; question: string; open: boolean },
+) {
+  const { data, error } = await supabase
+    .from("runs")
+    .select("open_questions")
+    .eq("id", input.runId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Run not found");
+
+  const current = (data.open_questions ?? []) as string[];
+  const without = current.filter((q) => q !== input.question);
+  const next = input.open ? [...without, input.question] : without;
+
+  const { error: updateError } = await supabase
+    .from("runs")
+    .update({ open_questions: next })
+    .eq("id", input.runId)
+    .eq("user_id", userId);
+  if (updateError) throw new Error(updateError.message);
+
+  return { openQuestions: next };
 }
 
 export async function runFinal(supabase: Client, userId: string, input: { runId: string }) {

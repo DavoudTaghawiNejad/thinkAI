@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Bug, Check, SkipForward, Sparkles } from "lucide-react";
+import { ArrowLeft, Bug, Check, SkipForward, Sparkles, X } from "lucide-react";
 import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,10 +13,17 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { generateFinalAnswer, getRun, reviewPrompt, skipCurrentStep } from "@/lib/refine.functions";
+import {
+  generateFinalAnswer,
+  getRun,
+  reviewPrompt,
+  setQuestionOpen,
+  skipCurrentStep,
+} from "@/lib/refine.functions";
 import {
   BETWEEN_TESTS_GUIDANCE,
   buildCriticUserText,
+  composeCriticInstruction,
   type AiCallRow,
   type IterationRow,
 } from "@/lib/refine.shared";
@@ -41,6 +48,59 @@ export const Route = createFileRoute("/run/$runId")({
   }),
   component: Workbench,
 });
+
+/**
+ * One of the critic's questions, with the × that leaves it intentionally open.
+ * Marking is a property of the run, so a question marked here reads as marked
+ * everywhere it appears — in the current verdict and back through the history.
+ */
+function QuestionItem({
+  index,
+  question,
+  open,
+  onToggle,
+  disabled,
+}: {
+  index: number;
+  question: string;
+  open: boolean;
+  onToggle: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <li className="flex items-start gap-2 text-sm">
+      <span className={`font-mono ${open ? "text-muted-foreground" : "text-primary"}`}>
+        {index + 1}.
+      </span>
+      <span className={`flex-1 ${open ? "text-muted-foreground line-through" : ""}`}>
+        {question}
+      </span>
+      {open && (
+        <span className="mt-0.5 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.15em] text-muted-foreground">
+          left open
+        </span>
+      )}
+      <Button
+        variant="ghost"
+        size="icon"
+        className={`-mt-1 h-7 w-7 shrink-0 ${
+          open ? "text-muted-foreground" : "text-destructive hover:text-destructive"
+        }`}
+        disabled={disabled}
+        onClick={onToggle}
+        title={
+          open ? "Undo — answer this question after all" : "Leave this question intentionally open"
+        }
+        aria-label={
+          open ? "Undo — answer this question after all" : "Leave this question intentionally open"
+        }
+        aria-pressed={open}
+      >
+        <X className="h-4 w-4" />
+      </Button>
+    </li>
+  );
+}
 
 function Workbench() {
   const { runId } = Route.useParams();
@@ -101,6 +161,15 @@ function Workbench() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const toggleOpen = useMutation({
+    mutationFn: (vars: { question: string; open: boolean }) =>
+      setQuestionOpen({ data: { runId, ...vars } }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["run", runId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const finalize = useMutation({
     mutationFn: () => generateFinalAnswer({ data: { runId } }),
     onSuccess: async () => {
@@ -119,6 +188,8 @@ function Workbench() {
   const latest = stepIterations[stepIterations.length - 1];
   const iterationCount = stepIterations.length;
   const sequenceDone = stepIndex >= steps.length;
+  const openQuestions: string[] = run.open_questions ?? [];
+  const isOpen = (question: string) => openQuestions.includes(question);
 
   const nextRequestPreview =
     step &&
@@ -262,12 +333,20 @@ function Workbench() {
                   </p>
                   <ul className="mt-2 space-y-2">
                     {latest.questions.map((q, i) => (
-                      <li key={i} className="flex gap-2 text-sm">
-                        <span className="font-mono text-primary">{i + 1}.</span>
-                        <span>{q}</span>
-                      </li>
+                      <QuestionItem
+                        key={i}
+                        index={i}
+                        question={q}
+                        open={isOpen(q)}
+                        disabled={toggleOpen.isPending}
+                        onToggle={() => toggleOpen.mutate({ question: q, open: !isOpen(q) })}
+                      />
                     ))}
                   </ul>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Struck out with × means intentionally left open — the reviewer is told to leave
+                    it out of the scoring and stop asking about it.
+                  </p>
                 </>
               )}
             </div>
@@ -300,10 +379,14 @@ function Workbench() {
           {nextRequestPreview && (
             <div className="mt-4">
               <p className="text-xs text-muted-foreground">
-                Next request preview · model {settings.critic_model} · history is never sent
+                Next request preview · model {settings.critic_model} · history is never sent, only
+                the questions you left open
               </p>
               <pre className="mt-2 max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed">
-                {`— SYSTEM / INSTRUCTIONS —\n${instructions.critic_instruction}\n\n— USER —\n${nextRequestPreview}`}
+                {`— SYSTEM / INSTRUCTIONS —\n${composeCriticInstruction({
+                  criticInstruction: instructions.critic_instruction,
+                  openQuestions,
+                })}\n\n— USER —\n${nextRequestPreview}`}
               </pre>
             </div>
           )}
@@ -369,10 +452,14 @@ function Workbench() {
                       </p>
                       <ul className="mt-2 space-y-2">
                         {it.questions.map((q, i) => (
-                          <li key={i} className="flex gap-2 text-sm">
-                            <span className="font-mono text-primary">{i + 1}.</span>
-                            <span>{q}</span>
-                          </li>
+                          <QuestionItem
+                            key={i}
+                            index={i}
+                            question={q}
+                            open={isOpen(q)}
+                            disabled={toggleOpen.isPending}
+                            onToggle={() => toggleOpen.mutate({ question: q, open: !isOpen(q) })}
+                          />
                         ))}
                       </ul>
                     </div>

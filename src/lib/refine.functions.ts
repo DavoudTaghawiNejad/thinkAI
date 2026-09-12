@@ -102,6 +102,27 @@ export const reviewPrompt = createServerFn({ method: "POST" })
     return runReview(context.supabase as never, context.userId, data);
   });
 
+/**
+ * Mark one of the critic's questions as intentionally left open (or unmark it).
+ * The mark holds for the whole run: from here on the question is listed in the
+ * critic instruction of every submission, in this test and the ones after it.
+ */
+export const setQuestionOpen = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        runId: z.string().uuid(),
+        question: z.string().min(1),
+        open: z.boolean(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ context, data }) => {
+    const { setQuestionOpen: handler } = await import("./refine.server");
+    return handler(context.supabase as never, context.userId, data);
+  });
+
 export const skipCurrentStep = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) =>
