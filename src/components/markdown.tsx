@@ -14,18 +14,26 @@ import remarkGfm from "remark-gfm";
 const COMPONENTS: Components = {
   // A real size step between levels: answers lean on ## for their top level,
   // and in a text-sm panel a semibold line the size of the body text does not
-  // read as a heading at all.
+  // read as a heading at all. Each size is half again the body scale it started
+  // from — 1.125/1/0.875rem grown by 50% — with tight leading so the larger
+  // lines do not drift apart.
   h1: ({ children }) => (
-    <h3 className="mt-6 text-lg font-semibold tracking-tight first:mt-0">{children}</h3>
+    <h3 className="mt-6 text-[1.6875rem] font-semibold leading-tight tracking-tight first:mt-0">
+      {children}
+    </h3>
   ),
   h2: ({ children }) => (
-    <h4 className="mt-5 text-base font-semibold tracking-tight first:mt-0">{children}</h4>
+    <h4 className="mt-5 text-[1.5rem] font-semibold leading-tight tracking-tight first:mt-0">
+      {children}
+    </h4>
   ),
   h3: ({ children }) => (
-    <h5 className="mt-4 text-sm font-semibold tracking-tight first:mt-0">{children}</h5>
+    <h5 className="mt-4 text-[1.3125rem] font-semibold leading-tight tracking-tight first:mt-0">
+      {children}
+    </h5>
   ),
   h4: ({ children }) => (
-    <h6 className="mt-4 font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground first:mt-0">
+    <h6 className="mt-4 font-mono text-[1.125rem] uppercase leading-tight tracking-[0.15em] text-muted-foreground first:mt-0">
       {children}
     </h6>
   ),
