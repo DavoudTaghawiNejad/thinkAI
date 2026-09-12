@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Markdown } from "@/components/markdown";
 import {
   Accordion,
   AccordionContent,
@@ -382,9 +383,7 @@ function Workbench() {
               <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-primary">
                 Final answer · {run.final_model}
               </p>
-              <div className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
-                {run.final_answer}
-              </div>
+              <Markdown className="mt-3 text-sm leading-relaxed">{run.final_answer}</Markdown>
             </div>
           )}
         </section>
