@@ -2,12 +2,19 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Bug, Check, Copy, SkipForward, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Bug, Check, Copy, ExternalLink, SkipForward, Sparkles, X } from "lucide-react";
 import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Markdown } from "@/components/markdown";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Accordion,
   AccordionContent,
@@ -104,7 +111,18 @@ function QuestionItem({
 }
 
 /**
- * Copies text to the system clipboard, and says so for a moment afterwards.
+ * Where a copied prompt is likely headed. Each opens a new chat in a new tab;
+ * the prompt is already on the clipboard, so all that is left is a paste.
+ */
+const DESTINATIONS = [
+  { name: "Claude", url: "https://claude.ai/new" },
+  { name: "ChatGPT", url: "https://chatgpt.com/" },
+  { name: "Grok", url: "https://grok.com/" },
+  { name: "Perplexity", url: "https://www.perplexity.ai/" },
+] as const;
+
+/**
+ * Copies text to the system clipboard, then offers somewhere to paste it.
  *
  * The async Clipboard API needs a secure context (https, or localhost); the
  * hidden-textarea fallback is what keeps this working anywhere else, and a
@@ -113,6 +131,7 @@ function QuestionItem({
  */
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
+  const [offering, setOffering] = useState(false);
 
   async function copy() {
     try {
@@ -132,16 +151,49 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       }
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
+      // Only offer the onward links once the text is actually on the clipboard
+      // — the whole offer is "paste this somewhere".
+      setOffering(true);
     } catch (error) {
       toast.error(`Could not copy: ${(error as Error).message}`);
     }
   }
 
   return (
-    <Button variant="outline" onClick={copy} disabled={!text.trim()}>
-      {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-      {copied ? "Copied" : label}
-    </Button>
+    <>
+      <Button variant="outline" onClick={copy} disabled={!text.trim()}>
+        {copied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+        {copied ? "Copied" : label}
+      </Button>
+
+      <Dialog open={offering} onOpenChange={setOffering}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Copied to your clipboard</DialogTitle>
+            <DialogDescription>
+              Open a chat and paste it, or close this and carry on.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2">
+            {DESTINATIONS.map((destination) => (
+              <Button key={destination.name} variant="outline" asChild>
+                <a
+                  href={destination.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  onClick={() => setOffering(false)}
+                >
+                  {destination.name} <ExternalLink className="ml-2 h-3.5 w-3.5" />
+                </a>
+              </Button>
+            ))}
+          </div>
+          <Button variant="ghost" onClick={() => setOffering(false)}>
+            Close
+          </Button>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
