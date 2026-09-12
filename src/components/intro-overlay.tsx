@@ -5,50 +5,41 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 /**
- * The seven slides a brand-new profile is greeted with: why chatting is not
- * thinking, and what thinkAI does instead. Each line is its own paragraph so
- * the argument lands one beat at a time.
+ * The slides a brand-new profile is greeted with: why chatting is not thinking,
+ * and what thinkAI does instead. Each line is its own paragraph so the argument
+ * lands one beat at a time, all in the same voice.
  */
-const SLIDES: { lines: string[]; emphasis?: number }[] = [
+const SLIDES: { lines: string[] }[] = [
   {
     lines: [
       "LLM chat interfaces make solving problems easy.",
       "But you do not think deeply.",
       "This makes your brain rot!",
     ],
-    emphasis: 2,
   },
   {
     lines: ["Without deep thought there is no success, no new ideas, no progress."],
-    emphasis: 0,
   },
   {
     lines: [
       "Instead of chatting with the AI:",
       "refine your question, and refine your brain, with thinkAI.",
     ],
-    emphasis: 1,
   },
   {
     lines: [
       "Write your question.",
-      "Get feedback to refine the question.",
+      "Get feedback.",
       "Refine your question.",
       "Until you have the best possible question…",
-      "… and get the perfect answer.",
+      "… to get the perfect answer.",
     ],
   },
   {
     lines: ["In addition to the answer, you will have clarity."],
-    emphasis: 0,
   },
   {
     lines: ["The process is tedious,", "but your brain does not rot."],
-    emphasis: 1,
-  },
-  {
-    lines: ["Write your question roughly.", "thinkAI will interrogate it, one test at a time."],
-    emphasis: 0,
   },
 ];
 
@@ -98,27 +89,19 @@ export function IntroOverlay({
     >
       <DialogContent className="max-w-xl gap-0 p-0 [&>button]:hidden">
         <div className="flex min-h-[22rem] flex-col">
-          <div className="flex items-center justify-between border-b border-border px-6 py-4">
+          <div className="border-b border-border px-6 py-4">
             <span className="font-mono text-xs uppercase tracking-[0.35em] text-primary">
               thinkAI
             </span>
-            <Button variant="ghost" size="sm" onClick={onDone}>
-              Skip
-            </Button>
           </div>
 
           <DialogTitle className="sr-only">What thinkAI is for</DialogTitle>
 
           <div className="flex flex-1 flex-col justify-center gap-3 px-8 py-10">
-            {slide.lines.map((line, i) => (
+            {slide.lines.map((line) => (
               <p
                 key={line}
-                className={cn(
-                  "text-balance text-lg leading-snug",
-                  i === slide.emphasis
-                    ? "text-2xl font-semibold tracking-tight text-foreground"
-                    : "text-muted-foreground",
-                )}
+                className="text-balance text-2xl font-semibold leading-snug tracking-tight text-foreground"
               >
                 {line}
               </p>
