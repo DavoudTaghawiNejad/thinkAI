@@ -102,6 +102,9 @@ function QuestionItem({
   );
 }
 
+/** Runaway guard for the pass-to-pass chain; no sequence has this many tests. */
+const MAX_CHAINED_REVIEWS = 32;
+
 function Workbench() {
   const { runId } = Route.useParams();
   const navigate = useNavigate();
@@ -127,11 +130,27 @@ function Workbench() {
   }, [query.data, dirty]);
 
   const review = useMutation({
-    mutationFn: (prompt: string) => reviewPrompt({ data: { runId, prompt } }),
+    mutationFn: async (prompt: string) => {
+      let result = await reviewPrompt({ data: { runId, prompt } });
+      // A passed test advances the run to the next one, which is a fresh
+      // question about the same unchanged prompt — so ask it immediately
+      // rather than leaving the run parked behind a Submit the author has no
+      // reason to press. The chain stops as soon as a test has something to
+      // say, and the loop is bounded by the sequence: every pass advances a
+      // step, and the last one reports reachedEnd.
+      for (let chained = 0; chained < MAX_CHAINED_REVIEWS; chained++) {
+        if (result.reason !== "pass" || result.reachedEnd) break;
+        toast.success("Test passed — on to the next test.");
+        // Refresh between calls so the step bar and history move as it goes.
+        await queryClient.invalidateQueries({ queryKey: ["run", runId] });
+        result = await reviewPrompt({ data: { runId, prompt } });
+      }
+      return result;
+    },
     onSuccess: async (result) => {
       setDirty(false);
       await queryClient.invalidateQueries({ queryKey: ["run", runId] });
-      if (result.reason === "pass") toast.success("Test passed — moving to the next test.");
+      if (result.reason === "pass") toast.success("Every test passed — ready for an answer.");
       else if (result.reason === "max_iterations")
         toast.message("Iteration limit reached — moving on.");
     },
