@@ -35,12 +35,6 @@ export async function redeemInviteAndCreateUser(input: {
   const config = await loadDefaultsConfig();
   const userId = created.user.id;
 
-  // They named themselves on the signup form, so there is nothing left to ask.
-  await supabaseAdmin
-    .from("profiles")
-    .update({ display_name: input.displayName, display_name_confirmed: true })
-    .eq("id", userId);
-
   await supabaseAdmin.from("settings").insert({
     user_id: userId,
     critic_model: config.critic_model,

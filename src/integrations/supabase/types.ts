@@ -178,24 +178,21 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string;
-          display_name: string | null;
-          display_name_confirmed: boolean;
+          display_name: string;
           id: string;
           intro_seen_at: string | null;
           is_admin: boolean;
         };
         Insert: {
           created_at?: string;
-          display_name?: string | null;
-          display_name_confirmed?: boolean;
+          display_name?: string;
           id: string;
           intro_seen_at?: string | null;
           is_admin?: boolean;
         };
         Update: {
           created_at?: string;
-          display_name?: string | null;
-          display_name_confirmed?: boolean;
+          display_name?: string;
           id?: string;
           intro_seen_at?: string | null;
           is_admin?: boolean;

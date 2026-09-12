@@ -19,14 +19,12 @@ import {
 } from "@/components/ui/select";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { IntroOverlay } from "@/components/intro-overlay";
-import { NameDialog } from "@/components/name-dialog";
 import {
   createRun,
   deleteRun,
   getWorkspace,
   listRuns,
   markIntroSeen,
-  saveDisplayName,
 } from "@/lib/refine.functions";
 
 export const Route = createFileRoute("/")({
@@ -58,9 +56,8 @@ function Home() {
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sequenceId, setSequenceId] = useState<string | null>(null);
-  const [introDismissed, setIntroDismissed] = useState(false);
+  const [introClosed, setIntroClosed] = useState(false);
   const [introReplay, setIntroReplay] = useState(false);
-  const [nameAnswered, setNameAnswered] = useState(false);
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth" });
@@ -95,29 +92,15 @@ function Home() {
     });
   }, [workspace.data, sequences]);
 
-  // Greet a profile that has never seen the introduction. The marker is written
-  // on the profile, but it is the local dismissal that closes the overlay, so a
-  // failed write cannot leave it standing.
-  const dismissIntro = useMutation({
+  // The introduction greets every visit until it is retired for good, which only
+  // "Do not show again" does. Closing it just closes it, for this visit.
+  const retireIntro = useMutation({
     mutationFn: () => markIntroSeen(),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["workspace"] }),
-  });
-
-  // Ask for a name before anything else: the introduction is a better greeting
-  // once there is someone to greet.
-  const nameOpen = Boolean(workspace.data && !workspace.data.nameConfirmed) && !nameAnswered;
-  const saveName = useMutation({
-    mutationFn: (displayName: string) => saveDisplayName({ data: { displayName } }),
-    onSuccess: () => {
-      setNameAnswered(true);
-      queryClient.invalidateQueries({ queryKey: ["workspace"] });
-    },
     onError: (error: Error) => toast.error(error.message),
   });
-
   const introOpen =
-    introReplay ||
-    (Boolean(workspace.data && !workspace.data.introSeen) && !introDismissed && !nameOpen);
+    introReplay || (Boolean(workspace.data && !workspace.data.introSeen) && !introClosed);
 
   const start = useMutation({
     mutationFn: () => createRun({ data: { prompt, sequenceId } }),
@@ -265,21 +248,16 @@ function Home() {
         </ul>
       </section>
 
-      <NameDialog
-        open={nameOpen}
-        suggestion={workspace.data?.displayName ?? null}
-        saving={saveName.isPending}
-        onSave={(name) => saveName.mutate(name)}
-      />
-
       <IntroOverlay
         open={introOpen}
-        onDone={() => {
+        onClose={() => {
           setIntroReplay(false);
-          setIntroDismissed(true);
-          // Replaying it deliberately is not the first time; the marker is
-          // already written and the call below is a no-op.
-          dismissIntro.mutate();
+          setIntroClosed(true);
+        }}
+        onRetire={() => {
+          setIntroReplay(false);
+          setIntroClosed(true);
+          retireIntro.mutate();
         }}
       />
 

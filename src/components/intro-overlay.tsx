@@ -39,11 +39,14 @@ const SLIDES: { lines: string[] }[] = [
 
 export function IntroOverlay({
   open,
-  onDone,
+  onClose,
+  onRetire,
 }: {
   open: boolean;
-  /** Called once, whichever way the introduction ends — finished or skipped. */
-  onDone: () => void;
+  /** Put it away for this visit. It greets them again next time. */
+  onClose: () => void;
+  /** Put it away for good — the only thing that stops it coming back. */
+  onRetire: () => void;
 }) {
   const [index, setIndex] = useState(0);
   const last = index === SLIDES.length - 1;
@@ -59,7 +62,7 @@ export function IntroOverlay({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "ArrowRight" || event.key === "Enter") {
         event.preventDefault();
-        if (last) onDone();
+        if (last) onClose();
         else setIndex((i) => i + 1);
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -68,7 +71,7 @@ export function IntroOverlay({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, last, onDone]);
+  }, [open, last, onClose]);
 
   const slide = SLIDES[index]!;
 
@@ -76,17 +79,24 @@ export function IntroOverlay({
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        // Closing counts as seen, however it was closed — the introduction is
-        // shown once, and a dismissal should not be met with it again.
-        if (!next) onDone();
+        // Closing is only for this visit, however it was closed. Retiring the
+        // introduction is a deliberate act, and has its own button.
+        if (!next) onClose();
       }}
     >
       <DialogContent className="max-w-xl gap-0 p-0 [&>button]:hidden">
         <div className="flex min-h-[22rem] flex-col">
-          <div className="border-b border-border px-6 py-4">
+          <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
             <span className="font-mono text-xs uppercase tracking-[0.35em] text-primary">
               thinkAI
             </span>
+            <button
+              type="button"
+              onClick={onRetire}
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              Do not show again
+            </button>
           </div>
 
           <DialogTitle className="sr-only">What thinkAI is for</DialogTitle>
@@ -125,7 +135,7 @@ export function IntroOverlay({
             </div>
 
             {last ? (
-              <Button size="sm" onClick={onDone}>
+              <Button size="sm" onClick={onClose}>
                 Start refining <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
             ) : (
