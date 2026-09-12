@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { loadDefaultsConfig } from "./defaults-config.server";
-import { seedSequencesForUser } from "./sequences.server";
+import { resolveNewUserSequenceId } from "./sequences.server";
 
 export async function redeemInviteAndCreateUser(input: {
   email: string;
@@ -23,22 +23,20 @@ export async function redeemInviteAndCreateUser(input: {
   });
   if (createErr) throw new Error(createErr.message);
 
-  // Settings + starting sequences are provisioned here (the DB trigger only
-  // creates the profile row — see supabase/migrations/*_centralize_defaults.sql).
-  // Models come fresh from config/defaults.yaml; the sequences — instructions and
-  // tests together — come from whatever an admin has marked "new-account
-  // default"/"new-account alternative", falling back to that same file.
+  // Settings are provisioned here (the DB trigger only creates the profile row
+  // — see supabase/migrations/*_centralize_defaults.sql). Models come fresh from
+  // config/defaults.yaml. No sequences are created: the general set is readable
+  // by every profile, so a new account simply starts pointed at whichever
+  // general sequence an admin marked for new profiles.
   const config = await loadDefaultsConfig();
   const userId = created.user.id;
-
-  const activeSequenceId = await seedSequencesForUser(supabaseAdmin, userId);
 
   await supabaseAdmin.from("settings").insert({
     user_id: userId,
     critic_model: config.critic_model,
     final_model: config.final_model,
     debug_mode: config.debug_mode,
-    active_sequence_id: activeSequenceId,
+    default_sequence_id: await resolveNewUserSequenceId(supabaseAdmin),
   });
 
   return { ok: true };

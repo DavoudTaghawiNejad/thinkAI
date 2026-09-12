@@ -5,24 +5,21 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 export const getWorkspace = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { loadSettings, loadSequences, loadSequenceConflicts } = await import("./refine.server");
+    const { loadSettings, loadSequences } = await import("./refine.server");
     const { resolveAdmin } = await import("./admin.server");
     const { loadDefaultsConfig } = await import("./defaults-config.server");
-    // A brand-new profile is provisioned inside loadSettings, so that has to
-    // finish before the lists are read. Running it inside the Promise.all below
-    // races the reads, and a fresh account's first load comes back with an empty
-    // sequence picker.
+    // A brand-new profile's settings row is written inside loadSettings, so that
+    // has to finish before the lists are read — the sequence list is keyed on
+    // the default it establishes.
     const settings = await loadSettings(context.supabase as never, context.userId);
-    const [sequences, sequenceConflicts, admin, config] = await Promise.all([
+    const [sequences, admin, config] = await Promise.all([
       loadSequences(context.supabase as never, context.userId, settings.default_sequence_id),
-      loadSequenceConflicts(context.supabase as never, context.userId),
       resolveAdmin(context.userId, context.claims as never),
       loadDefaultsConfig(),
     ]);
     return {
       settings,
       sequences,
-      sequenceConflicts,
       isAdmin: admin.isAdmin,
       // Sharing aims at the admin by default, so adding or changing one moves
       // the target with it. share_default_recipient is the fallback for a config
@@ -152,56 +149,70 @@ const stepSchema = z.object({
 });
 
 /**
- * Decide which Supabase client may write to a sequence and reject if the caller
- * has no business touching it. Owned rows use the caller's RLS client; General
- * rows (user_id null) require admin and the service-role client.
+ * A sequence is writable only by the profile that owns it. General sequences
+ * (user_id null) are editable by nobody — an admin changes one by re-publishing
+ * the personal sequence it came from, so there is no in-place edit path and no
+ * service-role write here.
  */
-async function writableClient(
-  context: { supabase: unknown; userId: string; claims: unknown },
+async function requireOwnSequence(
+  context: { supabase: any; userId: string },
   id: string,
-): Promise<{ client: any; scope: "own" | "global" }> {
-  const anyCtx = context as { supabase: any };
-  const { data, error } = await anyCtx.supabase
+): Promise<void> {
+  const { data, error } = await context.supabase
     .from("test_sequences")
     .select("user_id")
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Not found.");
-  if (data.user_id === context.userId) return { client: anyCtx.supabase, scope: "own" };
-  if (data.user_id === null) {
-    const { requireAdmin } = await import("./admin.server");
-    await requireAdmin(context.userId, context.claims as never);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    return { client: supabaseAdmin, scope: "global" };
+  if (data.user_id === null)
+    throw new Error(
+      "General sequences cannot be edited. Duplicate this one to make a version of your own.",
+    );
+  if (data.user_id !== context.userId) throw new Error("You can only change your own sequences.");
+}
+
+/**
+ * The names a sequence of the caller's may not take: their other sequences', and
+ * every general sequence's. A name is how a sequence is recognised, and a
+ * private one wearing a general one's name is the ambiguity this rules out.
+ *
+ * `exceptId` is the sequence being named, exempt from clashing with itself —
+ * and from clashing with the general sequence published *from* it, which shares
+ * its name by design.
+ */
+async function takenSequenceNames(
+  context: { supabase: any; userId: string },
+  exceptId?: string,
+): Promise<Set<string>> {
+  // RLS returns the caller's own rows plus the general ones, which is exactly
+  // the set that matters here.
+  const { data, error } = await context.supabase
+    .from("test_sequences")
+    .select("id, name, user_id, published_from");
+  if (error) throw new Error(error.message);
+  type Row = { id: string; name: string; user_id: string | null; published_from: string | null };
+  const taken = new Set<string>();
+  for (const row of (data ?? []) as Row[]) {
+    if (exceptId && (row.id === exceptId || row.published_from === exceptId)) continue;
+    if (row.user_id === null || row.user_id === context.userId) taken.add(row.name);
   }
-  throw new Error("You can only change your own sequences.");
+  return taken;
+}
+
+/** Reject a name already in use, naming what it collides with. */
+async function requireFreeSequenceName(
+  context: { supabase: any; userId: string },
+  name: string,
+  exceptId?: string,
+): Promise<void> {
+  if ((await takenSequenceNames(context, exceptId)).has(name))
+    throw new Error(`“${name}” is already the name of a test sequence you can see. Pick another.`);
 }
 
 async function replaceSteps(client: any, sequenceId: string, steps: z.infer<typeof stepSchema>[]) {
   const { replaceSequenceSteps } = await import("./sequences.server");
   await replaceSequenceSteps(client, sequenceId, steps);
-}
-
-/**
- * Refuse to overwrite a sequence an admin handed the caller — a pushed copy, or
- * the one seeded into their account at signup — while it is still as delivered.
- * They duplicate it to get a version of their own. An admin editing a General
- * sequence is untouched by this, and so is an "(old)" superseded copy, which
- * archiving already detached from its origin.
- */
-async function refuseIfFromAdmin(context: { supabase: any }, id: string, scope: "own" | "global") {
-  if (scope !== "own") return;
-  const { data } = await context.supabase
-    .from("test_sequences")
-    .select("origin_id, name")
-    .eq("id", id)
-    .maybeSingle();
-  if (data?.origin_id) {
-    throw new Error(
-      `“${data.name}” was provided by an admin and cannot be overwritten. Duplicate it to make a version of your own.`,
-    );
-  }
 }
 
 export const saveSettings = createServerFn({ method: "POST" })
@@ -212,7 +223,6 @@ export const saveSettings = createServerFn({ method: "POST" })
         critic_model: z.string().min(1),
         final_model: z.string().min(1),
         debug_mode: z.boolean(),
-        active_sequence_id: uuid.nullable(),
       })
       .parse(d),
   )
@@ -244,6 +254,7 @@ export const saveSequence = createServerFn({ method: "POST" })
       final_instruction: data.final_instruction,
     };
     if (!data.id) {
+      await requireFreeSequenceName(context, data.name);
       const { data: row, error } = await context.supabase
         .from("test_sequences")
         .insert({ user_id: context.userId, ...fields })
@@ -253,11 +264,14 @@ export const saveSequence = createServerFn({ method: "POST" })
       await replaceSteps(context.supabase, row.id, data.steps);
       return { id: row.id as string };
     }
-    const { client, scope } = await writableClient(context, data.id);
-    await refuseIfFromAdmin(context, data.id, scope);
-    const { error } = await client.from("test_sequences").update(fields).eq("id", data.id);
+    await requireOwnSequence(context, data.id);
+    await requireFreeSequenceName(context, data.name, data.id);
+    const { error } = await context.supabase
+      .from("test_sequences")
+      .update(fields)
+      .eq("id", data.id);
     if (error) throw new Error(error.message);
-    await replaceSteps(client, data.id, data.steps);
+    await replaceSteps(context.supabase, data.id, data.steps);
     return { id: data.id };
   });
 
@@ -311,12 +325,9 @@ export const importSequenceYaml = createServerFn({ method: "POST" })
     }
     const doc = result.data;
 
-    // Don't collide with a sequence they already have; suffix until it is free.
-    const { data: existing } = await context.supabase
-      .from("test_sequences")
-      .select("name")
-      .eq("user_id", context.userId);
-    const taken = new Set((existing ?? []).map((r: { name: string }) => r.name));
+    // Don't collide with a sequence they already have, or with a general one;
+    // suffix until the name is free.
+    const taken = await takenSequenceNames(context);
     let name = doc.name;
     if (taken.has(name)) {
       let n = 2;
@@ -339,29 +350,37 @@ export const importSequenceYaml = createServerFn({ method: "POST" })
     return { id: row.id as string, name };
   });
 
+/**
+ * Copy a sequence into the caller's own library under a name they choose.
+ *
+ * The name is asked for rather than derived: duplicating a general sequence is
+ * how anyone gets a version they can edit, and the copy may not keep the
+ * original's name — one name, one sequence.
+ */
 export const duplicateSequence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => z.object({ id: uuid }).parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ id: uuid, name: z.string().trim().min(1).max(120) }).parse(d),
+  )
   .handler(async ({ context, data }) => {
     const { loadSequenceForCopy, copySequenceForUser } = await import("./sequences.server");
     const src = await loadSequenceForCopy(context.supabase as never, data.id);
     if (!src) throw new Error("Not found.");
-    // A hand-made duplicate is the user's own from the start — it deliberately
-    // does not track an origin, so an admin push never claims it.
+    await requireFreeSequenceName(context, data.name);
+    // The duplicate is the caller's own, plain and editable.
     const id = await copySequenceForUser(context.supabase as never, context.userId, src, {
-      name: `${src.name} (copy)`,
-      trackOrigin: false,
+      name: data.name,
     });
-    return { id };
+    return { id, name: data.name };
   });
 
 export const renameSequence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ id: uuid, name: z.string().min(1).max(120) }).parse(d))
   .handler(async ({ context, data }) => {
-    const { client, scope } = await writableClient(context, data.id);
-    await refuseIfFromAdmin(context, data.id, scope);
-    const { error } = await client
+    await requireOwnSequence(context, data.id);
+    await requireFreeSequenceName(context, data.name, data.id);
+    const { error } = await context.supabase
       .from("test_sequences")
       .update({ name: data.name })
       .eq("id", data.id);
@@ -373,28 +392,25 @@ export const deleteSequence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ id: uuid }).parse(d))
   .handler(async ({ context, data }) => {
-    const { client } = await writableClient(context, data.id);
-    await context.supabase
-      .from("settings")
-      .update({ active_sequence_id: null })
-      .eq("user_id", context.userId)
-      .eq("active_sequence_id", data.id);
-    const { error } = await client.from("test_sequences").delete().eq("id", data.id);
+    await requireOwnSequence(context, data.id);
+    // settings.default_sequence_id and runs.sequence_id are ON DELETE SET NULL,
+    // so both fall back to where a new profile starts rather than dangling.
+    const { error } = await context.supabase.from("test_sequences").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
 
 /**
- * Point the caller's profile at its default sequence — what the home-page picker
- * pre-selects. Any sequence they can see qualifies: their own, a superseded
- * "(old)" copy, or a shared General one. The choice lives on the profile, so one
- * profile picking a General sequence says nothing about anyone else's.
+ * Point the caller's profile at its default sequence — what the home page and
+ * a new run start from. Any sequence they can see qualifies: one of their own,
+ * or a general one. The choice lives on the profile, so one profile defaulting
+ * to a general sequence says nothing about anyone else's.
  */
 export const setDefaultSequence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ id: uuid }).parse(d))
   .handler(async ({ context, data }) => {
-    // RLS only lets them read their own rows and the General ones, so a
+    // RLS only lets them read their own rows and the general ones, so a
     // successful read is the whole permission check.
     const { data: row, error: readErr } = await context.supabase
       .from("test_sequences")
@@ -413,74 +429,22 @@ export const setDefaultSequence = createServerFn({ method: "POST" })
   });
 
 /**
- * Admin only. Designate which sequences brand-new accounts start with: the
- * "default" one becomes their active sequence, the "alternative" is copied in
- * alongside it. At most one of each across the whole install.
+ * Admin only. Publish one of the caller's own sequences into the general set,
+ * where every profile can use it — and nobody, the admin included, can edit it.
  *
- * The target may be a General sequence or one the admin owns — new profiles get
- * a copy either way. Clearing whoever previously held the role means writing to
- * a row the caller may not own, so the write goes through the service-role
- * client after the admin check.
+ * Publishing the same sequence again rewrites the general version in place, so
+ * profiles defaulting to it follow the update. Until then the admin's personal
+ * copy is theirs to edit freely: editing has no consequences, publishing does.
  */
-export const setSequenceNewUserRole = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z.object({ id: uuid, role: z.enum(["default", "alternative"]).nullable() }).parse(d),
-  )
-  .handler(async ({ context, data }) => {
-    const { requireAdmin } = await import("./admin.server");
-    await requireAdmin(context.userId, context.claims as never);
-
-    // The admin may only designate a sequence they can actually see: their own,
-    // or a shared General one — never another user's private sequence.
-    const { data: target, error: readErr } = await context.supabase
-      .from("test_sequences")
-      .select("id, user_id")
-      .eq("id", data.id)
-      .maybeSingle();
-    if (readErr) throw new Error(readErr.message);
-    if (!target) throw new Error("Not found.");
-    if (target.user_id !== null && target.user_id !== context.userId)
-      throw new Error("You can only designate your own or a General sequence.");
-
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    if (data.role) {
-      const { error: clearErr } = await supabaseAdmin
-        .from("test_sequences")
-        .update({ new_user_role: null })
-        .eq("new_user_role", data.role);
-      if (clearErr) throw new Error(clearErr.message);
-    }
-    const { error } = await supabaseAdmin
-      .from("test_sequences")
-      .update({ new_user_role: data.role })
-      .eq("id", data.id);
-    if (error) throw new Error(error.message);
-    return { ok: true };
-  });
-
-/**
- * Admin only. Publish a sequence into every profile — a General one, or one of
- * the admin's own.
- *
- * Per profile, one of three things happens, and none of them can lose work:
- *  - no copy yet          → it is copied in;
- *  - copy left untouched  → the previous version is kept as "<name> (old)"
- *                           (exactly one per name) and the new one takes over;
- *  - copy has been edited → theirs is left strictly alone and the new version
- *                           waits under "<name> (new)" behind a rename prompt
- *                           they see on their next visit.
- */
-export const pushSequenceToAll = createServerFn({ method: "POST" })
+export const publishSequence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => z.object({ id: uuid }).parse(d))
   .handler(async ({ context, data }) => {
     const { requireAdmin } = await import("./admin.server");
     await requireAdmin(context.userId, context.claims as never);
 
-    // Push from a General sequence or one of the admin's own, never from another
-    // user's private sequence. Read through the caller's RLS client, which can
-    // only see those two kinds in the first place.
+    // Only a sequence of their own: an admin publishes their own work, never
+    // another profile's (which RLS hides from them in any case).
     const { data: source, error: readErr } = await context.supabase
       .from("test_sequences")
       .select("id, user_id")
@@ -488,28 +452,46 @@ export const pushSequenceToAll = createServerFn({ method: "POST" })
       .maybeSingle();
     if (readErr) throw new Error(readErr.message);
     if (!source) throw new Error("Not found.");
-    if (source.user_id !== null && source.user_id !== context.userId)
-      throw new Error("You can only push your own or a General sequence.");
+    if (source.user_id !== context.userId)
+      throw new Error("You can only publish one of your own sequences.");
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { pushSequenceToEveryProfile } = await import("./sequences.server");
-    return pushSequenceToEveryProfile(supabaseAdmin as never, data.id);
+    const { publishSequenceAsGeneral } = await import("./sequences.server");
+    return publishSequenceAsGeneral(supabaseAdmin as never, data.id);
   });
 
-export const resolveSequenceConflict = createServerFn({ method: "POST" })
+/**
+ * Admin only. Take a general sequence back out of the general set. Profiles
+ * that had it as their default fall back to what new profiles start with; runs
+ * already finished keep the tests they ran against.
+ */
+export const withdrawSequence = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) =>
-    z
-      .object({
-        conflictId: uuid,
-        action: z.enum(["rename", "discard"]),
-        newName: z.string().max(120).optional(),
-      })
-      .parse(d),
-  )
+  .inputValidator((d: unknown) => z.object({ id: uuid }).parse(d))
   .handler(async ({ context, data }) => {
-    const { resolveConflict } = await import("./sequences.server");
-    return resolveConflict(context.supabase as never, context.userId, data);
+    const { requireAdmin } = await import("./admin.server");
+    await requireAdmin(context.userId, context.claims as never);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { withdrawGeneralSequence } = await import("./sequences.server");
+    await withdrawGeneralSequence(supabaseAdmin as never, data.id);
+    return { ok: true };
+  });
+
+/**
+ * Admin only. Mark which general sequence a brand-new profile starts pointed
+ * at. Exactly one holds the mark at a time; every profile is free to point
+ * somewhere else afterwards.
+ */
+export const setNewUserDefault = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => z.object({ id: uuid }).parse(d))
+  .handler(async ({ context, data }) => {
+    const { requireAdmin } = await import("./admin.server");
+    await requireAdmin(context.userId, context.claims as never);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { setNewUserDefaultSequence } = await import("./sequences.server");
+    await setNewUserDefaultSequence(supabaseAdmin as never, data.id);
+    return { ok: true };
   });
 
 export const resetToDefaults = createServerFn({ method: "POST" })
@@ -556,7 +538,6 @@ export const resetToDefaults = createServerFn({ method: "POST" })
         critic_model: config.critic_model,
         final_model: config.final_model,
         debug_mode: config.debug_mode,
-        active_sequence_id: sequence.id,
         // "Reset to defaults" leaves the picker pointing somewhere sane.
         default_sequence_id: sequence.id,
       },

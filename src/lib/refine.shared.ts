@@ -21,8 +21,13 @@ export type TestStep = {
 /**
  * One package: the instructions the reviewing and answering models are given,
  * plus the ordered tests they are used for. Instructions and tests are written
- * for each other, so they are named, picked, saved, shared and pushed as a
- * single thing. `owned` false = admin/global.
+ * for each other, so they are named, picked, saved, shared and published as a
+ * single thing.
+ *
+ * A sequence is one of two kinds, and `owned` says which:
+ *  - personal (`owned`)  — private to its owner and always freely editable;
+ *  - general (`!owned`)  — visible to every profile and editable by nobody.
+ *    An admin changes one by re-publishing the personal sequence it came from.
  */
 export type TestSequence = {
   id: string;
@@ -31,45 +36,27 @@ export type TestSequence = {
   final_instruction: string;
   owned: boolean;
   /**
-   * This profile's default — what the home-page picker pre-selects. Any sequence
-   * the profile can see may be chosen, General ones included, because the choice
-   * lives on the profile rather than on the sequence.
+   * This profile's default — what the home-page picker and a new run start
+   * from. Any sequence the profile can see may be chosen, general ones
+   * included, because the choice lives on the profile rather than on the
+   * sequence.
    */
   isDefault: boolean;
+  /** General only: what a brand-new profile's default is set to. */
+  isNewUserDefault: boolean;
   /**
-   * Delivered by an admin — pushed to every profile, or seeded into the account
-   * at signup — and still exactly as delivered. Read-only: duplicate it to make
-   * a version you can change.
+   * Own sequences only: a general version of this one exists, published from
+   * it. Publishing again updates that version rather than adding another.
    */
-  fromAdmin: boolean;
-  /** On a General sequence: what new accounts are seeded with. */
-  newUserRole: NewUserRole;
+  publishedAsGeneral: boolean;
   steps: TestStep[];
-};
-
-export type NewUserRole = "default" | "alternative" | null;
-
-/**
- * A pushed sequence that collided with a copy the user had edited. Their
- * version was left untouched; the pushed one is parked under "… (new)" until
- * they rename theirs or discard it.
- */
-export type SequenceConflict = {
-  id: string;
-  /** The canonical name both versions are contending for. */
-  name: string;
-  mineId: string;
-  mineName: string;
-  incomingId: string;
-  incomingName: string;
 };
 
 export type Settings = {
   critic_model: string;
   final_model: string;
   debug_mode: boolean;
-  active_sequence_id: string | null;
-  /** The profile's default sequence — may be one of the shared General ones. */
+  /** The profile's default sequence — may be one of the shared general ones. */
   default_sequence_id: string | null;
 };
 

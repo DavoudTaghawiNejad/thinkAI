@@ -18,7 +18,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { SequenceConflictDialog } from "@/components/sequence-conflict-dialog";
 import { createRun, deleteRun, getWorkspace, listRuns } from "@/lib/refine.functions";
 
 export const Route = createFileRoute("/")({
@@ -69,15 +68,15 @@ function Home() {
 
   const sequences = useMemo(() => workspace.data?.sequences ?? [], [workspace.data]);
 
-  // Pick up the marked default once the workspace loads, and re-seed if the
-  // current pick disappears (deleted, or renamed away by a push).
+  // Start on the profile's default once the workspace loads, and fall back if
+  // the current pick disappears (deleted, or withdrawn from the general set).
   useEffect(() => {
     if (!workspace.data) return;
     setSequenceId((current) => {
       if (current && sequences.some((s) => s.id === current)) return current;
       return (
         sequences.find((s) => s.isDefault)?.id ??
-        workspace.data!.settings.active_sequence_id ??
+        workspace.data!.settings.default_sequence_id ??
         sequences[0]?.id ??
         null
       );
@@ -223,17 +222,14 @@ function Home() {
       </section>
 
       {workspace.data && (
-        <>
-          <SettingsDialog
-            open={settingsOpen}
-            onOpenChange={setSettingsOpen}
-            settings={workspace.data.settings}
-            sequences={workspace.data.sequences}
-            shareRecipient={workspace.data.shareRecipient}
-            isAdmin={workspace.data.isAdmin}
-          />
-          <SequenceConflictDialog conflicts={workspace.data.sequenceConflicts} />
-        </>
+        <SettingsDialog
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          settings={workspace.data.settings}
+          sequences={workspace.data.sequences}
+          shareRecipient={workspace.data.shareRecipient}
+          isAdmin={workspace.data.isAdmin}
+        />
       )}
     </main>
   );

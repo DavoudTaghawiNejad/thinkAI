@@ -255,52 +255,9 @@ export type Database = {
           },
         ];
       };
-      sequence_push_conflicts: {
-        Row: {
-          created_at: string;
-          id: string;
-          incoming_id: string;
-          mine_id: string;
-          name: string;
-          user_id: string;
-        };
-        Insert: {
-          created_at?: string;
-          id?: string;
-          incoming_id: string;
-          mine_id: string;
-          name: string;
-          user_id: string;
-        };
-        Update: {
-          created_at?: string;
-          id?: string;
-          incoming_id?: string;
-          mine_id?: string;
-          name?: string;
-          user_id?: string;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "sequence_push_conflicts_incoming_id_fkey";
-            columns: ["incoming_id"];
-            isOneToOne: false;
-            referencedRelation: "test_sequences";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "sequence_push_conflicts_mine_id_fkey";
-            columns: ["mine_id"];
-            isOneToOne: false;
-            referencedRelation: "test_sequences";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
       settings: {
         Row: {
           active_preset_id: string | null;
-          active_sequence_id: string | null;
           created_at: string;
           critic_model: string;
           debug_mode: boolean;
@@ -311,7 +268,6 @@ export type Database = {
         };
         Insert: {
           active_preset_id?: string | null;
-          active_sequence_id?: string | null;
           created_at?: string;
           critic_model?: string;
           debug_mode?: boolean;
@@ -322,7 +278,6 @@ export type Database = {
         };
         Update: {
           active_preset_id?: string | null;
-          active_sequence_id?: string | null;
           created_at?: string;
           critic_model?: string;
           debug_mode?: boolean;
@@ -346,62 +301,46 @@ export type Database = {
             referencedRelation: "test_sequences";
             referencedColumns: ["id"];
           },
-          {
-            foreignKeyName: "settings_active_sequence_id_fkey";
-            columns: ["active_sequence_id"];
-            isOneToOne: false;
-            referencedRelation: "test_sequences";
-            referencedColumns: ["id"];
-          },
         ];
       };
       test_sequences: {
         Row: {
-          archived_at: string | null;
           created_at: string;
           critic_instruction: string;
           final_instruction: string;
           id: string;
-          is_default: boolean;
+          is_new_user_default: boolean;
           name: string;
-          new_user_role: string | null;
-          origin_fingerprint: string | null;
-          origin_id: string | null;
+          published_from: string | null;
           updated_at: string;
           user_id: string | null;
         };
         Insert: {
-          archived_at?: string | null;
           created_at?: string;
           critic_instruction?: string;
           final_instruction?: string;
           id?: string;
-          is_default?: boolean;
+          is_new_user_default?: boolean;
           name: string;
-          new_user_role?: string | null;
-          origin_fingerprint?: string | null;
-          origin_id?: string | null;
+          published_from?: string | null;
           updated_at?: string;
           user_id?: string | null;
         };
         Update: {
-          archived_at?: string | null;
           created_at?: string;
           critic_instruction?: string;
           final_instruction?: string;
           id?: string;
-          is_default?: boolean;
+          is_new_user_default?: boolean;
           name?: string;
-          new_user_role?: string | null;
-          origin_fingerprint?: string | null;
-          origin_id?: string | null;
+          published_from?: string | null;
           updated_at?: string;
           user_id?: string | null;
         };
         Relationships: [
           {
-            foreignKeyName: "test_sequences_origin_id_fkey";
-            columns: ["origin_id"];
+            foreignKeyName: "test_sequences_published_from_fkey";
+            columns: ["published_from"];
             isOneToOne: false;
             referencedRelation: "test_sequences";
             referencedColumns: ["id"];

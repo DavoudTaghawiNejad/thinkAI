@@ -1,6 +1,6 @@
 import { runModelRequest, ProviderError } from "./ai-providers.server";
 import { loadDefaultsConfig } from "./defaults-config.server";
-import { seedSequencesForUser } from "./sequences.server";
+import { resolveNewUserSequenceId } from "./sequences.server";
 import {
   buildCriticUserText,
   composeCriticInstruction,
@@ -23,30 +23,31 @@ type SettingsRow = {
   critic_model: string;
   final_model: string;
   debug_mode: boolean;
-  active_sequence_id: string | null;
-  /** The profile's default. A pointer, so it may name a General sequence too. */
+  /**
+   * The profile's default sequence, and its only pointer at one. May name a
+   * general sequence: the choice lives on the profile, so one profile
+   * defaulting to a general sequence says nothing about anyone else's.
+   */
   default_sequence_id: string | null;
 };
 
 /**
- * Give a fresh profile its starting sequences (instructions and tests together)
- * and a settings row pointing at one. Idempotent-ish: only called when no
- * settings row exists yet (fresh signup, or a legacy user the migration somehow
- * missed).
+ * Give a fresh profile its settings row. No sequences are created for it: the
+ * general set is readable by every profile, so a new one simply starts pointed
+ * at whatever an admin marked as what new profiles start with. They make a
+ * sequence of their own by duplicating one.
+ *
+ * Only called when no settings row exists yet (fresh signup, or a legacy user
+ * the migration somehow missed).
  */
 async function provisionWorkspace(supabase: Client, userId: string): Promise<SettingsRow> {
   const config = await loadDefaultsConfig();
-
-  // Sequences come from whatever an admin has marked "new-account default" and
-  // "new-account alternative", falling back to config/defaults.yaml.
-  const activeSequenceId = await seedSequencesForUser(supabase, userId);
 
   const row: SettingsRow = {
     critic_model: config.critic_model,
     final_model: config.final_model,
     debug_mode: config.debug_mode,
-    active_sequence_id: activeSequenceId,
-    default_sequence_id: activeSequenceId,
+    default_sequence_id: await resolveNewUserSequenceId(supabase),
   };
   const { error: settingsErr } = await supabase
     .from("settings")
@@ -58,7 +59,7 @@ async function provisionWorkspace(supabase: Client, userId: string): Promise<Set
 async function loadSettingsRow(supabase: Client, userId: string): Promise<SettingsRow> {
   const { data, error } = await supabase
     .from("settings")
-    .select("critic_model, final_model, debug_mode, active_sequence_id, default_sequence_id")
+    .select("critic_model, final_model, debug_mode, default_sequence_id")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -72,7 +73,6 @@ export async function loadSettings(supabase: Client, userId: string): Promise<Se
     critic_model: row.critic_model,
     final_model: row.final_model,
     debug_mode: row.debug_mode,
-    active_sequence_id: row.active_sequence_id,
     default_sequence_id: row.default_sequence_id,
   };
 }
@@ -105,16 +105,13 @@ async function loadSequenceInstructions(
   };
 }
 
-/** The oldest General sequence — what a profile falls back to with nothing set. */
+/**
+ * What a run falls back to when it has no sequence of its own — because it was
+ * started before runs pinned one, or because the sequence it pinned has since
+ * been deleted. The same general sequence a brand-new profile starts with.
+ */
 async function fallbackSequenceId(supabase: Client): Promise<string | null> {
-  const { data } = await supabase
-    .from("test_sequences")
-    .select("id")
-    .is("user_id", null)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return (data?.id as string | undefined) ?? null;
+  return resolveNewUserSequenceId(supabase);
 }
 
 async function loadSequenceSteps(supabase: Client, sequenceId: string | null): Promise<TestStep[]> {
@@ -135,13 +132,16 @@ type SequenceRow = {
   critic_instruction: string;
   final_instruction: string;
   user_id: string | null;
-  origin_id: string | null;
-  new_user_role: "default" | "alternative" | null;
+  published_from: string | null;
+  is_new_user_default: boolean;
   test_sequence_steps: TestStep[] | null;
 };
 
-/** Own + General sequences with their steps, for the Settings dialog and the
- * home-page picker. */
+/**
+ * Every sequence the profile may use — its own, plus the general set — with
+ * their steps, for the Settings dialog and the home-page picker. RLS decides
+ * what comes back: own rows and general ones, never another profile's.
+ */
 export async function loadSequences(
   supabase: Client,
   userId: string,
@@ -150,49 +150,27 @@ export async function loadSequences(
   const { data, error } = await supabase
     .from("test_sequences")
     .select(
-      `id, name, critic_instruction, final_instruction, user_id, origin_id, new_user_role, test_sequence_steps (${STEP_COLUMNS})`,
+      `id, name, critic_instruction, final_instruction, user_id, published_from, is_new_user_default, test_sequence_steps (${STEP_COLUMNS})`,
     )
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
-  return ((data ?? []) as SequenceRow[]).map((s) => ({
+  const rows = (data ?? []) as SequenceRow[];
+  // Which of the caller's own sequences already has a general version, so the
+  // admin UI can say "update the general version" rather than "publish".
+  const publishedSources = new Set(
+    rows.filter((s) => s.user_id === null && s.published_from).map((s) => s.published_from!),
+  );
+  return rows.map((s) => ({
     id: s.id,
     name: s.name,
     critic_instruction: s.critic_instruction,
     final_instruction: s.final_instruction,
+    /** False means general: shared with everyone, and editable by nobody. */
     owned: s.user_id === userId,
     isDefault: s.id === defaultSequenceId,
-    // Still carrying its origin: this is an admin's wording as delivered, either
-    // pushed out or handed to the account at signup. Read-only — duplicate to
-    // make a version of your own.
-    fromAdmin: s.origin_id != null,
-    newUserRole: s.new_user_role,
+    isNewUserDefault: s.is_new_user_default,
+    publishedAsGeneral: s.user_id === userId && publishedSources.has(s.id),
     steps: [...(s.test_sequence_steps ?? [])].sort((a, b) => a.position - b.position),
-  }));
-}
-
-/** Pending "an admin pushed an update, please rename your copy" prompts. */
-export async function loadSequenceConflicts(supabase: Client, userId: string) {
-  const { data, error } = await supabase
-    .from("sequence_push_conflicts")
-    .select("id, name, mine_id, incoming_id, mine:mine_id (name), incoming:incoming_id (name)")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true });
-  if (error) throw new Error(error.message);
-  type ConflictRow = {
-    id: string;
-    name: string;
-    mine_id: string;
-    incoming_id: string;
-    mine: { name: string } | null;
-    incoming: { name: string } | null;
-  };
-  return ((data ?? []) as ConflictRow[]).map((c) => ({
-    id: c.id,
-    name: c.name,
-    mineId: c.mine_id,
-    mineName: c.mine?.name ?? c.name,
-    incomingId: c.incoming_id,
-    incomingName: c.incoming?.name ?? c.name,
   }));
 }
 

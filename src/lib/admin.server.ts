@@ -2,8 +2,9 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { loadDefaultsConfig } from "./defaults-config.server";
 
 /**
- * Resolve whether a user may manage the shared "General" presets/sequences
- * (the rows with no owner). A user is an admin if profiles.is_admin is set, or
+ * Resolve whether a user may manage the general test sequences — publishing
+ * one, withdrawing one, or marking which one new profiles start with. A user is
+ * an admin if profiles.is_admin is set, or
  * if their email is listed in admin_emails in config/defaults.yaml — in which
  * case we also flip the flag so it sticks. Returns the user's email too, since
  * callers often already need it.
@@ -29,8 +30,7 @@ export async function resolveAdmin(
 
   const config = await loadDefaultsConfig();
   const listed =
-    email != null &&
-    config.admin_emails.some((e) => e.toLowerCase() === email!.toLowerCase());
+    email != null && config.admin_emails.some((e) => e.toLowerCase() === email!.toLowerCase());
 
   if (listed) {
     await supabaseAdmin.from("profiles").update({ is_admin: true }).eq("id", userId);
@@ -45,5 +45,5 @@ export async function requireAdmin(
   claims: Record<string, unknown> | undefined,
 ): Promise<void> {
   const { isAdmin } = await resolveAdmin(userId, claims);
-  if (!isAdmin) throw new Error("Only an admin can modify the shared General presets and sequences.");
+  if (!isAdmin) throw new Error("Only an admin can manage the general test sequences.");
 }

@@ -1,24 +1,24 @@
-import { createHash } from "node:crypto";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { loadDefaultsConfig } from "./defaults-config.server";
-
 /**
- * Everything that reasons about a test sequence as a *copy of something* —
- * fingerprinting, copying, seeding a new account, and resolving which sequence
- * a run should use. Shared by the two provisioning paths (signup in
- * invite.server.ts, lazy top-up in refine.server.ts) and by the admin push in
- * refine.functions.ts.
+ * Everything that reasons about a test sequence as a *shared* thing: the
+ * general set, publishing into it, and which sequence a profile or a run falls
+ * back to.
  *
- * ## How a pushed copy is tracked
+ * ## The two kinds
  *
- * A copy carries `origin_id` (the General sequence it came from) and
- * `origin_fingerprint` (a hash of its contents *as delivered*). Re-hashing the
- * copy and comparing answers the only question the push cares about: has the
- * user edited this since we gave it to them?
+ * A sequence is either **general** (`user_id IS NULL`) or **personal**
+ * (`user_id` = its owner). General sequences are visible to every profile and
+ * editable by nobody — not even an admin, and not even the admin who published
+ * one. Personal sequences are private and always freely editable; editing one
+ * has no effect on anyone else.
  *
- * A push overwrites an untouched copy in place: the previous version is simply
- * dropped, with no keepsake left behind. A copy the user has edited is never
- * touched — it raises a rename prompt instead.
+ * ## Publishing
+ *
+ * An admin publishes one of their personal sequences into the general set. The
+ * general row records `published_from`, so publishing the same source again
+ * finds it and rewrites it **in place** — same id, so every profile pointing at
+ * it and every run started against it stays attached to a live sequence. The
+ * admin's personal source stays theirs to keep editing; nothing they type
+ * reaches anyone until they publish again.
  */
 
 type Client = { from: (table: string) => any };
@@ -31,39 +31,8 @@ export type SequenceStepInput = {
   max_iterations: number;
 };
 
-/** The columns that make up a sequence's identity for fingerprinting/copying. */
+/** The columns that make up a sequence's identity for copying and publishing. */
 const STEP_FIELDS = "name, description, instruction, pass_threshold, max_iterations, position";
-
-/** Suffix the incoming copy is parked under while a rename conflict is pending. */
-export const NEW_SUFFIX = " (new)";
-
-/**
- * Stable content hash of the whole package: name, both instructions, and every
- * step's user-visible fields in order. Position is implied by the array, so
- * reordering steps changes the hash — which is what we want, a reorder is an
- * edit. Instructions are in here because they are part of the package: rewording
- * the critic counts as editing the sequence.
- */
-export function fingerprintSequence(seq: {
-  name: string;
-  critic_instruction: string;
-  final_instruction: string;
-  steps: SequenceStepInput[];
-}): string {
-  const canonical = JSON.stringify([
-    seq.name,
-    seq.critic_instruction,
-    seq.final_instruction,
-    seq.steps.map((s) => [
-      s.name,
-      s.description,
-      s.instruction,
-      s.pass_threshold,
-      s.max_iterations,
-    ]),
-  ]);
-  return createHash("sha256").update(canonical).digest("hex");
-}
 
 export type LoadedSequence = {
   id: string;
@@ -71,12 +40,10 @@ export type LoadedSequence = {
   critic_instruction: string;
   final_instruction: string;
   user_id: string | null;
-  origin_id: string | null;
-  origin_fingerprint: string | null;
   steps: SequenceStepInput[];
 };
 
-/** Read one sequence with its steps in order, shaped for hashing and copying. */
+/** Read one sequence with its steps in order, shaped for copying. */
 export async function loadSequenceForCopy(
   client: Client,
   id: string,
@@ -84,7 +51,7 @@ export async function loadSequenceForCopy(
   const { data, error } = await client
     .from("test_sequences")
     .select(
-      `id, name, critic_instruction, final_instruction, user_id, origin_id, origin_fingerprint, test_sequence_steps (${STEP_FIELDS})`,
+      `id, name, critic_instruction, final_instruction, user_id, test_sequence_steps (${STEP_FIELDS})`,
     )
     .eq("id", id)
     .maybeSingle();
@@ -126,44 +93,25 @@ export async function replaceSequenceSteps(
   if (insErr) throw new Error(insErr.message);
 }
 
-/**
- * Write a copy of `source` into `userId`'s library, stamped with where it came
- * from and what it looked like at that moment.
- */
+/** Write a copy of `source` into `userId`'s own library. */
 export async function copySequenceForUser(
   client: Client,
   userId: string,
   source: {
-    id: string;
     name: string;
     critic_instruction: string;
     final_instruction: string;
     steps: SequenceStepInput[];
   },
-  options: { name?: string; trackOrigin?: boolean } = {},
+  options: { name?: string } = {},
 ): Promise<string> {
-  const name = options.name ?? source.name;
-  const track = options.trackOrigin ?? true;
   const { data: row, error } = await client
     .from("test_sequences")
     .insert({
       user_id: userId,
-      name,
+      name: options.name ?? source.name,
       critic_instruction: source.critic_instruction,
       final_instruction: source.final_instruction,
-      // The fingerprint records the *source* content, so a copy saved under a
-      // different name still reads as untouched until the package changes.
-      ...(track
-        ? {
-            origin_id: source.id,
-            origin_fingerprint: fingerprintSequence({
-              name: source.name,
-              critic_instruction: source.critic_instruction,
-              final_instruction: source.final_instruction,
-              steps: source.steps,
-            }),
-          }
-        : {}),
     })
     .select("id")
     .single();
@@ -172,101 +120,27 @@ export async function copySequenceForUser(
   return row.id as string;
 }
 
-/** Has the user edited this copy since it was pushed to them? */
-export function isModifiedCopy(seq: LoadedSequence): boolean {
-  if (!seq.origin_fingerprint) return true;
-  return (
-    fingerprintSequence({
-      name: seq.name,
-      critic_instruction: seq.critic_instruction,
-      final_instruction: seq.final_instruction,
-      steps: seq.steps,
-    }) !== seq.origin_fingerprint
-  );
-}
-
 /**
- * The sequences an admin has designated for brand-new accounts. These may be
- * General rows or an admin's own — new profiles get a copy either way, and RLS
- * keeps an admin's original invisible to them. Expects a service-role client.
+ * Where a brand-new profile's default points: the general sequence an admin
+ * marked for it, else the oldest general one, else nothing at all (an install
+ * with no general sequences yet — the profile picks one itself, and the run
+ * falls back the same way).
  */
-export async function loadNewUserSequences(client: Client): Promise<{
-  default: LoadedSequence | null;
-  alternative: LoadedSequence | null;
-}> {
-  const { data, error } = await client
+export async function resolveNewUserSequenceId(client: Client): Promise<string | null> {
+  const { data } = await client
     .from("test_sequences")
-    .select(
-      `id, name, critic_instruction, final_instruction, user_id, new_user_role, test_sequence_steps (${STEP_FIELDS})`,
-    )
-    .not("new_user_role", "is", null);
-  if (error) throw new Error(error.message);
-  const byRole = (role: string) => {
-    const row = (data ?? []).find((r: { new_user_role: string }) => r.new_user_role === role);
-    return row ? ({ ...row, steps: sortSteps(row.test_sequence_steps) } as LoadedSequence) : null;
-  };
-  return { default: byRole("default"), alternative: byRole("alternative") };
-}
-
-/**
- * Give a brand-new account its starting sequences and return the one that
- * should be active. Prefers whatever an admin has marked "new-user default" and
- * "new-user alternative"; if no General sequence is designated, falls back to
- * building "My sequence" straight from config/defaults.yaml, which is what this
- * app did before admins could curate the starting set.
- */
-export async function seedSequencesForUser(client: Client, userId: string): Promise<string> {
-  // Read the designated sequences with the service-role client: a designated
-  // sequence may be an admin's own, which the signing-up user's RLS client
-  // cannot see. The copies themselves are written through `client`, which owns
-  // them.
-  const { default: designatedDefault, alternative } = await loadNewUserSequences(
-    supabaseAdmin as never,
-  );
-
-  const alternativeId = alternative ? await copySequenceForUser(client, userId, alternative) : null;
-
-  if (designatedDefault) {
-    return copySequenceForUser(client, userId, designatedDefault);
-  }
-  if (alternativeId) {
-    // Only an alternative was designated — point at it rather than leaving the
-    // account with nothing selected.
-    return alternativeId;
-  }
-
-  // Nothing designated at all: fall back to config/defaults.yaml, which is what
-  // this app did before admins could curate the starting set.
-  const config = await loadDefaultsConfig();
-  const { data: row, error } = await client
-    .from("test_sequences")
-    .insert({
-      user_id: userId,
-      name: "My sequence",
-      critic_instruction: config.critic_instruction,
-      final_instruction: config.final_instructions,
-    })
     .select("id")
-    .single();
-  if (error) throw new Error(error.message);
-  await replaceSequenceSteps(
-    client,
-    row.id,
-    config.test_steps.map((s) => ({
-      name: s.name,
-      description: s.description,
-      instruction: s.instruction,
-      pass_threshold: s.pass_threshold,
-      max_iterations: s.max_iterations,
-    })),
-  );
-  return row.id as string;
+    .is("user_id", null)
+    .order("is_new_user_default", { ascending: false })
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
 }
 
 /**
- * Which sequence a new run should use when the caller didn't pick one: the
- * profile's marked default, else whatever is active (covers profiles whose
- * active sequence is a General one, which is never marked default).
+ * Which sequence a new run uses when the caller didn't pick one: the profile's
+ * default, else where a new profile would start.
  */
 export async function resolveDefaultSequenceId(
   client: Client,
@@ -274,217 +148,154 @@ export async function resolveDefaultSequenceId(
 ): Promise<string | null> {
   const { data: settings } = await client
     .from("settings")
-    .select("default_sequence_id, active_sequence_id")
+    .select("default_sequence_id")
     .eq("user_id", userId)
     .maybeSingle();
-  return (
-    (settings?.default_sequence_id as string | null) ??
-    (settings?.active_sequence_id as string | null) ??
-    null
-  );
+  const id = (settings?.default_sequence_id as string | null) ?? null;
+  if (id) return id;
+  // The general set is readable under any client, so this needs no escalation.
+  return resolveNewUserSequenceId(client);
 }
 
-export type PushResult = { added: number; replaced: number; conflicted: number };
+export type PublishResult = { id: string; created: boolean };
 
 /**
- * Publish a sequence into every profile. The source may be a General row or one
- * the pushing admin owns; either way each profile receives its own copy.
+ * Publish one of an admin's personal sequences into the general set, so every
+ * profile can use it.
  *
- * Per profile, one of three things happens, and none of them can lose work:
- *  - no copy yet          → it is copied in;
- *  - copy left untouched  → it is overwritten in place; the version it held is
- *                           dropped;
- *  - copy has been edited → theirs is left strictly alone and the new version
- *                           waits under "<name> (new)" behind a rename prompt
- *                           they see on their next visit.
+ * Re-publishing the same source rewrites the general row it produced, in place:
+ * the id survives, so profiles defaulting to it and runs started against it
+ * follow the new version instead of being cut loose. A general row that
+ * predates publishing (no `published_from`) is adopted by name on the first
+ * publish that matches it, rather than colliding with it.
  *
- * A run that started against an overwritten copy follows it to the new content:
- * nothing is kept behind for it to stay pinned to.
- *
- * Expects a service-role client; the caller is responsible for the admin check.
+ * Expects a service-role client — general rows are unwritable under RLS by
+ * design. The caller is responsible for the admin check and for confirming the
+ * source belongs to them.
  */
-export async function pushSequenceToEveryProfile(
+export async function publishSequenceAsGeneral(
   client: Client,
   sourceId: string,
-): Promise<PushResult> {
+): Promise<PublishResult> {
   const source = await loadSequenceForCopy(client, sourceId);
   if (!source) throw new Error("Not found.");
+  if (source.user_id === null)
+    throw new Error("That is already a general sequence. Publish one of your own instead.");
   if (source.steps.length === 0)
-    throw new Error("This sequence has no tests yet — add some before pushing it.");
+    throw new Error("This sequence has no tests yet — add some before publishing it.");
 
-  const { data: profiles, error: profilesErr } = await client.from("profiles").select("id");
-  if (profilesErr) throw new Error(profilesErr.message);
+  const existing = await findGeneralRowFor(client, source);
 
-  const result: PushResult = { added: 0, replaced: 0, conflicted: 0 };
+  // The name is how everyone identifies a general sequence, so it may not be
+  // taken by a different one.
+  const { data: clash } = await client
+    .from("test_sequences")
+    .select("id")
+    .is("user_id", null)
+    .eq("name", source.name)
+    .limit(1)
+    .maybeSingle();
+  if (clash && clash.id !== existing?.id)
+    throw new Error(
+      `A different general sequence is already called “${source.name}”. Rename yours, or re-publish the one that holds the name.`,
+    );
 
-  for (const profile of profiles ?? []) {
-    const userId = profile.id as string;
-    // When an admin pushes one of their own sequences, skip their profile: the
-    // source *is* their copy, and matching it against itself would raise a
-    // rename conflict with itself.
-    if (source.user_id !== null && userId === source.user_id) continue;
+  const fields = {
+    name: source.name,
+    critic_instruction: source.critic_instruction,
+    final_instruction: source.final_instruction,
+    published_from: source.id,
+  };
 
-    const mineId = await findProfileCopy(client, userId, source);
-
-    if (!mineId) {
-      await copySequenceForUser(client, userId, source);
-      result.added++;
-      continue;
-    }
-
-    const mine = await loadSequenceForCopy(client, mineId);
-    if (!mine) continue;
-
-    if (isModifiedCopy(mine)) {
-      const incomingId = await copySequenceForUser(client, userId, source, {
-        name: `${source.name}${NEW_SUFFIX}`,
-      });
-      const { error } = await client
-        .from("sequence_push_conflicts")
-        .upsert(
-          { user_id: userId, mine_id: mine.id, incoming_id: incomingId, name: source.name },
-          { onConflict: "user_id,mine_id" },
-        );
-      if (error) throw new Error(error.message);
-      result.conflicted++;
-      continue;
-    }
-
-    // Untouched, so it is simply overwritten in place. Updating the existing row
-    // rather than swapping in a new one keeps its id stable, so the profile's
-    // active/default pointers and any run that started against it stay attached
-    // to a live sequence instead of being nulled out.
-    const { error: overwriteErr } = await client
-      .from("test_sequences")
-      .update({
-        name: source.name,
-        critic_instruction: source.critic_instruction,
-        final_instruction: source.final_instruction,
-        origin_id: source.id,
-        origin_fingerprint: fingerprintSequence({
-          name: source.name,
-          critic_instruction: source.critic_instruction,
-          final_instruction: source.final_instruction,
-          steps: source.steps,
-        }),
-      })
-      .eq("id", mine.id);
-    if (overwriteErr) throw new Error(overwriteErr.message);
-    await replaceSequenceSteps(client, mine.id, source.steps);
-
-    result.replaced++;
+  if (existing) {
+    const { error } = await client.from("test_sequences").update(fields).eq("id", existing.id);
+    if (error) throw new Error(error.message);
+    await replaceSequenceSteps(client, existing.id, source.steps);
+    return { id: existing.id, created: false };
   }
 
-  return result;
+  const { data: row, error } = await client
+    .from("test_sequences")
+    .insert({ user_id: null, ...fields })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  await replaceSequenceSteps(client, row.id, source.steps);
+  return { id: row.id as string, created: true };
 }
 
-/**
- * The profile's copy of a General sequence: the one we pushed before, or failing
- * that an untracked sequence of theirs already holding the name — which a push
- * then treats as edited, so it raises a rename prompt rather than clobbering it.
- */
-async function findProfileCopy(
+/** The general row this source has already produced, if any. */
+async function findGeneralRowFor(
   client: Client,
-  userId: string,
   source: LoadedSequence,
-): Promise<string | null> {
+): Promise<{ id: string } | null> {
   const { data: byOrigin } = await client
     .from("test_sequences")
     .select("id")
-    .eq("user_id", userId)
-    .eq("origin_id", source.id)
-    .order("created_at", { ascending: true })
+    .is("user_id", null)
+    .eq("published_from", source.id)
     .limit(1)
     .maybeSingle();
-  if (byOrigin) return byOrigin.id as string;
+  if (byOrigin) return byOrigin as { id: string };
 
+  // No link yet, but a general sequence already holds the name: this is a
+  // re-publish of a row that predates publishing (the seeded "Default", or one
+  // published from a source since deleted). Adopt it rather than refusing.
   const { data: byName } = await client
     .from("test_sequences")
     .select("id")
-    .eq("user_id", userId)
+    .is("user_id", null)
     .eq("name", source.name)
-    .is("origin_id", null)
-    .order("created_at", { ascending: true })
+    .is("published_from", null)
     .limit(1)
     .maybeSingle();
-  return byName ? (byName.id as string) : null;
+  return byName ? (byName as { id: string }) : null;
 }
 
 /**
- * Settle one pending rename prompt. Either the user keeps their edited version
- * under a new name, or discards it; either way the pushed version then takes the
- * canonical name and the prompt goes away.
+ * Take a general sequence back out of the general set. Profiles that had it as
+ * their default fall back to where a new profile starts; runs already finished
+ * keep their recorded steps. Expects a service-role client after an admin check.
  */
-export async function resolveConflict(
-  client: Client,
-  userId: string,
-  input: { conflictId: string; action: "rename" | "discard"; newName?: string | undefined },
-): Promise<{ ok: true }> {
-  const { data: conflict, error: readErr } = await client
-    .from("sequence_push_conflicts")
-    .select("id, name, mine_id, incoming_id")
-    .eq("id", input.conflictId)
-    .eq("user_id", userId)
+export async function withdrawGeneralSequence(client: Client, id: string): Promise<void> {
+  const { data: row, error: readErr } = await client
+    .from("test_sequences")
+    .select("id, user_id, is_new_user_default")
+    .eq("id", id)
     .maybeSingle();
   if (readErr) throw new Error(readErr.message);
-  if (!conflict) throw new Error("That update has already been dealt with.");
+  if (!row) throw new Error("Not found.");
+  if (row.user_id !== null) throw new Error("That is not a general sequence.");
+  if (row.is_new_user_default)
+    throw new Error(
+      "This is what new profiles start with. Mark another general sequence as that first.",
+    );
 
-  if (input.action === "rename") {
-    const newName = input.newName?.trim();
-    if (!newName) throw new Error("Give your version a name.");
-    if (newName === conflict.name)
-      throw new Error(
-        `"${conflict.name}" is the name the updated version will take — pick a different one for yours.`,
-      );
-    const { data: clash } = await client
-      .from("test_sequences")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("name", newName)
-      .neq("id", conflict.mine_id)
-      .limit(1)
-      .maybeSingle();
-    if (clash) throw new Error(`You already have a sequence called "${newName}".`);
+  const { error } = await client.from("test_sequences").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
 
-    const { error } = await client
-      .from("test_sequences")
-      .update({ name: newName })
-      .eq("id", conflict.mine_id);
-    if (error) throw new Error(error.message);
-    // Keeping their edit makes it theirs outright — no future push claims it.
-    const { error: detachErr } = await client
-      .from("test_sequences")
-      .update({ origin_id: null, origin_fingerprint: null })
-      .eq("id", conflict.mine_id);
-    if (detachErr) throw new Error(detachErr.message);
-  } else {
-    // Discarding theirs hands its roles to the incoming version.
-    const { error: activeErr } = await client
-      .from("settings")
-      .update({ active_sequence_id: conflict.incoming_id })
-      .eq("user_id", userId)
-      .eq("active_sequence_id", conflict.mine_id);
-    if (activeErr) throw new Error(activeErr.message);
-    const { error: defaultErr } = await client
-      .from("settings")
-      .update({ default_sequence_id: conflict.incoming_id })
-      .eq("user_id", userId)
-      .eq("default_sequence_id", conflict.mine_id);
-    if (defaultErr) throw new Error(defaultErr.message);
-    const { error: delErr } = await client
-      .from("test_sequences")
-      .delete()
-      .eq("id", conflict.mine_id);
-    if (delErr) throw new Error(delErr.message);
-  }
-
-  const { error: renameErr } = await client
+/** Mark one general sequence as what brand-new profiles start pointed at. */
+export async function setNewUserDefaultSequence(client: Client, id: string): Promise<void> {
+  const { data: row, error: readErr } = await client
     .from("test_sequences")
-    .update({ name: conflict.name })
-    .eq("id", conflict.incoming_id);
-  if (renameErr) throw new Error(renameErr.message);
+    .select("id, user_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (readErr) throw new Error(readErr.message);
+  if (!row) throw new Error("Not found.");
+  if (row.user_id !== null)
+    throw new Error("Only a general sequence can be what new profiles start with.");
 
-  // Deleting their row cascades the conflict away; this covers the rename path.
-  await client.from("sequence_push_conflicts").delete().eq("id", conflict.id);
-  return { ok: true };
+  // Only one row may carry the flag, so the old holder is cleared first.
+  const { error: clearErr } = await client
+    .from("test_sequences")
+    .update({ is_new_user_default: false })
+    .eq("is_new_user_default", true);
+  if (clearErr) throw new Error(clearErr.message);
+  const { error } = await client
+    .from("test_sequences")
+    .update({ is_new_user_default: true })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
 }
