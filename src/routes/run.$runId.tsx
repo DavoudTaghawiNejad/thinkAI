@@ -113,12 +113,14 @@ function QuestionItem({
 /**
  * Where a copied prompt is likely headed. Each opens a new chat in a new tab;
  * the prompt is already on the clipboard, so all that is left is a paste.
+ *
+ * Claude is the recommended one, and wears the app's own orange to say so.
  */
 const DESTINATIONS = [
-  { name: "Claude", url: "https://claude.ai/new" },
-  { name: "ChatGPT", url: "https://chatgpt.com/" },
-  { name: "Grok", url: "https://grok.com/" },
-  { name: "Perplexity", url: "https://www.perplexity.ai/" },
+  { name: "Claude", url: "https://claude.ai/new", recommended: true },
+  { name: "ChatGPT", url: "https://chatgpt.com/", recommended: false },
+  { name: "Grok", url: "https://grok.com/", recommended: false },
+  { name: "Perplexity", url: "https://www.perplexity.ai/", recommended: false },
 ] as const;
 
 /**
@@ -176,7 +178,11 @@ function CopyButton({ text, label }: { text: string; label: string }) {
           </DialogHeader>
           <div className="grid grid-cols-2 gap-2">
             {DESTINATIONS.map((destination) => (
-              <Button key={destination.name} variant="outline" asChild>
+              <Button
+                key={destination.name}
+                variant={destination.recommended ? "default" : "outline"}
+                asChild
+              >
                 <a
                   href={destination.url}
                   target="_blank"
