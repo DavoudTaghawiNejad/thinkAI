@@ -10,7 +10,7 @@
 # time with the searchable_facts_rule value — edit the rule once, here.
 #
 # Keep critic_model/final_model in sync with CRITIC_MODELS/FINAL_MODELS in
-# src/lib/forge.shared.ts — if a value here isn't one of those choices, the
+# src/lib/refine.shared.ts — if a value here isn't one of those choices, the
 # Settings dropdown renders blank for anyone holding that value (still works
 # correctly, just looks empty until they pick something from the list).
 
@@ -20,8 +20,10 @@ final_model: anthropic/claude-opus-5
 
 debug_mode: false
 
-# Where "Share via email" pre-fills the recipient. The Settings dialog lets the
-# user change it per-share; this is just the default and the one-click target.
+# Fallback for where "Share via email" pre-fills the recipient. Normally the
+# first entry of admin_emails below is used, so the share target follows whoever
+# is admin; this value only applies when admin_emails is empty. Either way the
+# Settings dialog lets the user type a different address per-share.
 share_default_recipient: davoud@taghawi-nejad.de
 
 # Accounts allowed to create/edit the shared "General" instruction presets and

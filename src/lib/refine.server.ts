@@ -1,5 +1,6 @@
 import { runModelRequest, ProviderError } from "./ai-providers.server";
 import { loadDefaultsConfig } from "./defaults-config.server";
+import { seedSequencesForUser } from "./sequences.server";
 import {
   buildCriticUserText,
   VERDICT_SCHEMA,
@@ -9,7 +10,7 @@ import {
   type RunRow,
   type IterationRow,
   type AiCallRow,
-} from "./forge.shared";
+} from "./refine.shared";
 
 type Client = {
   from: (table: string) => any;
@@ -21,49 +22,30 @@ type SettingsRow = {
   critic_model: string;
   final_model: string;
   debug_mode: boolean;
-  active_preset_id: string | null;
   active_sequence_id: string | null;
+  /** The profile's default. A pointer, so it may name a General sequence too. */
+  default_sequence_id: string | null;
 };
 
 /**
- * Create a user's personal "My instructions" preset + "My sequence" sequence
- * from config/defaults.yaml and a settings row pointing at them. Idempotent-ish:
- * only called when no settings row exists yet (fresh signup, or a legacy user
- * the migration somehow missed).
+ * Give a fresh profile its starting sequences (instructions and tests together)
+ * and a settings row pointing at one. Idempotent-ish: only called when no
+ * settings row exists yet (fresh signup, or a legacy user the migration somehow
+ * missed).
  */
 async function provisionWorkspace(supabase: Client, userId: string): Promise<SettingsRow> {
   const config = await loadDefaultsConfig();
 
-  const { data: preset, error: presetErr } = await supabase
-    .from("instruction_presets")
-    .insert({
-      user_id: userId,
-      name: "My instructions",
-      critic_instruction: config.critic_instruction,
-      final_instruction: config.final_instructions,
-    })
-    .select("id")
-    .single();
-  if (presetErr) throw new Error(presetErr.message);
-
-  const { data: sequence, error: seqErr } = await supabase
-    .from("test_sequences")
-    .insert({ user_id: userId, name: "My sequence" })
-    .select("id")
-    .single();
-  if (seqErr) throw new Error(seqErr.message);
-
-  const { error: stepsErr } = await supabase.from("test_sequence_steps").insert(
-    config.test_steps.map((step, position) => ({ sequence_id: sequence.id, position, ...step })),
-  );
-  if (stepsErr) throw new Error(stepsErr.message);
+  // Sequences come from whatever an admin has marked "new-account default" and
+  // "new-account alternative", falling back to config/defaults.yaml.
+  const activeSequenceId = await seedSequencesForUser(supabase, userId);
 
   const row: SettingsRow = {
     critic_model: config.critic_model,
     final_model: config.final_model,
     debug_mode: config.debug_mode,
-    active_preset_id: preset.id,
-    active_sequence_id: sequence.id,
+    active_sequence_id: activeSequenceId,
+    default_sequence_id: activeSequenceId,
   };
   const { error: settingsErr } = await supabase
     .from("settings")
@@ -75,7 +57,7 @@ async function provisionWorkspace(supabase: Client, userId: string): Promise<Set
 async function loadSettingsRow(supabase: Client, userId: string): Promise<SettingsRow> {
   const { data, error } = await supabase
     .from("settings")
-    .select("critic_model, final_model, debug_mode, active_preset_id, active_sequence_id")
+    .select("critic_model, final_model, debug_mode, active_sequence_id, default_sequence_id")
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -83,27 +65,38 @@ async function loadSettingsRow(supabase: Client, userId: string): Promise<Settin
   return provisionWorkspace(supabase, userId);
 }
 
-/** Resolve the active preset's instruction text, falling back to global "Default". */
-async function loadActivePreset(
+export async function loadSettings(supabase: Client, userId: string): Promise<Settings> {
+  const row = await loadSettingsRow(supabase, userId);
+  return {
+    critic_model: row.critic_model,
+    final_model: row.final_model,
+    debug_mode: row.debug_mode,
+    active_sequence_id: row.active_sequence_id,
+    default_sequence_id: row.default_sequence_id,
+  };
+}
+
+/**
+ * The instructions a run is answering under. They live on the run's own
+ * sequence, so re-wording a sequence mid-run cannot change what an in-flight run
+ * was reviewed against — and a deleted sequence falls back the same way its
+ * steps do.
+ */
+async function loadSequenceInstructions(
   supabase: Client,
-  activePresetId: string | null,
+  sequenceId: string | null,
 ): Promise<{ critic_instruction: string; final_instruction: string }> {
-  if (activePresetId) {
+  const seqId = sequenceId ?? (await fallbackSequenceId(supabase));
+  if (seqId) {
     const { data } = await supabase
-      .from("instruction_presets")
+      .from("test_sequences")
       .select("critic_instruction, final_instruction")
-      .eq("id", activePresetId)
+      .eq("id", seqId)
       .maybeSingle();
-    if (data) return data as { critic_instruction: string; final_instruction: string };
+    if (data?.critic_instruction && data.final_instruction) {
+      return data as { critic_instruction: string; final_instruction: string };
+    }
   }
-  const { data: fallback } = await supabase
-    .from("instruction_presets")
-    .select("critic_instruction, final_instruction")
-    .is("user_id", null)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  if (fallback) return fallback as { critic_instruction: string; final_instruction: string };
   const config = await loadDefaultsConfig();
   return {
     critic_instruction: config.critic_instruction,
@@ -111,41 +104,20 @@ async function loadActivePreset(
   };
 }
 
-export async function loadSettings(supabase: Client, userId: string): Promise<Settings> {
-  const row = await loadSettingsRow(supabase, userId);
-  const preset = await loadActivePreset(supabase, row.active_preset_id);
-  return {
-    critic_instruction: preset.critic_instruction,
-    final_instruction: preset.final_instruction,
-    critic_model: row.critic_model,
-    final_model: row.final_model,
-    debug_mode: row.debug_mode,
-    active_preset_id: row.active_preset_id,
-    active_sequence_id: row.active_sequence_id,
-  };
+/** The oldest General sequence — what a profile falls back to with nothing set. */
+async function fallbackSequenceId(supabase: Client): Promise<string | null> {
+  const { data } = await supabase
+    .from("test_sequences")
+    .select("id")
+    .is("user_id", null)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
 }
 
-/** The steps of the user's active sequence, in order. */
-export async function loadSteps(supabase: Client, userId: string): Promise<TestStep[]> {
-  const row = await loadSettingsRow(supabase, userId);
-  return loadSequenceSteps(supabase, row.active_sequence_id);
-}
-
-async function loadSequenceSteps(
-  supabase: Client,
-  sequenceId: string | null,
-): Promise<TestStep[]> {
-  let seqId = sequenceId;
-  if (!seqId) {
-    const { data: fallback } = await supabase
-      .from("test_sequences")
-      .select("id")
-      .is("user_id", null)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    seqId = fallback?.id ?? null;
-  }
+async function loadSequenceSteps(supabase: Client, sequenceId: string | null): Promise<TestStep[]> {
+  const seqId = sequenceId ?? (await fallbackSequenceId(supabase));
   if (!seqId) return [];
   const { data, error } = await supabase
     .from("test_sequence_steps")
@@ -156,66 +128,96 @@ async function loadSequenceSteps(
   return (data ?? []) as TestStep[];
 }
 
-type PresetRow = {
+type SequenceRow = {
   id: string;
   name: string;
   critic_instruction: string;
   final_instruction: string;
   user_id: string | null;
-};
-
-type SequenceRow = {
-  id: string;
-  name: string;
-  user_id: string | null;
+  origin_id: string | null;
+  new_user_role: "default" | "alternative" | null;
   test_sequence_steps: TestStep[] | null;
 };
 
-/** Own + global presets, newest own first, for the Settings dialog. */
-export async function loadPresets(supabase: Client, userId: string) {
-  const { data, error } = await supabase
-    .from("instruction_presets")
-    .select("id, name, critic_instruction, final_instruction, user_id")
-    .order("created_at", { ascending: true });
-  if (error) throw new Error(error.message);
-  return ((data ?? []) as PresetRow[]).map((p) => ({
-    id: p.id,
-    name: p.name,
-    critic_instruction: p.critic_instruction,
-    final_instruction: p.final_instruction,
-    owned: p.user_id === userId,
-  }));
-}
-
-/** Own + global sequences with their steps, for the Settings dialog. */
-export async function loadSequences(supabase: Client, userId: string) {
+/** Own + General sequences with their steps, for the Settings dialog and the
+ * home-page picker. */
+export async function loadSequences(
+  supabase: Client,
+  userId: string,
+  defaultSequenceId: string | null,
+) {
   const { data, error } = await supabase
     .from("test_sequences")
-    .select(`id, name, user_id, test_sequence_steps (${STEP_COLUMNS})`)
+    .select(
+      `id, name, critic_instruction, final_instruction, user_id, origin_id, new_user_role, test_sequence_steps (${STEP_COLUMNS})`,
+    )
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   return ((data ?? []) as SequenceRow[]).map((s) => ({
     id: s.id,
     name: s.name,
+    critic_instruction: s.critic_instruction,
+    final_instruction: s.final_instruction,
     owned: s.user_id === userId,
+    isDefault: s.id === defaultSequenceId,
+    // Still carrying its origin: this is an admin's wording as delivered, either
+    // pushed out or handed to the account at signup. Read-only — duplicate to
+    // make a version of your own.
+    fromAdmin: s.origin_id != null,
+    newUserRole: s.new_user_role,
     steps: [...(s.test_sequence_steps ?? [])].sort((a, b) => a.position - b.position),
   }));
 }
 
+/** Pending "an admin pushed an update, please rename your copy" prompts. */
+export async function loadSequenceConflicts(supabase: Client, userId: string) {
+  const { data, error } = await supabase
+    .from("sequence_push_conflicts")
+    .select("id, name, mine_id, incoming_id, mine:mine_id (name), incoming:incoming_id (name)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  type ConflictRow = {
+    id: string;
+    name: string;
+    mine_id: string;
+    incoming_id: string;
+    mine: { name: string } | null;
+    incoming: { name: string } | null;
+  };
+  return ((data ?? []) as ConflictRow[]).map((c) => ({
+    id: c.id,
+    name: c.name,
+    mineId: c.mine_id,
+    mineName: c.mine?.name ?? c.name,
+    incomingId: c.incoming_id,
+    incomingName: c.incoming?.name ?? c.name,
+  }));
+}
+
 export async function loadRun(supabase: Client, userId: string, runId: string) {
-  const [runRes, iterRes, steps, settings] = await Promise.all([
+  const [runRes, iterRes, settings] = await Promise.all([
     supabase.from("runs").select("*").eq("id", runId).eq("user_id", userId).maybeSingle(),
     supabase
       .from("iterations")
       .select("*")
       .eq("run_id", runId)
       .order("created_at", { ascending: true }),
-    loadSteps(supabase, userId),
     loadSettings(supabase, userId),
   ]);
   if (runRes.error) throw new Error(runRes.error.message);
   if (!runRes.data) throw new Error("Run not found");
   if (iterRes.error) throw new Error(iterRes.error.message);
+
+  // A run's steps come from the sequence it was started with, not from whatever
+  // the user has selected now — otherwise switching sequences mid-run would
+  // change the shape of a run already under way. loadSequenceSteps falls back to
+  // a General sequence if the run's own was deleted.
+  const sequenceId = (runRes.data.sequence_id as string | null) ?? null;
+  const [steps, instructions] = await Promise.all([
+    loadSequenceSteps(supabase, sequenceId),
+    loadSequenceInstructions(supabase, sequenceId),
+  ]);
 
   let aiCalls: AiCallRow[] = [];
   if (settings.debug_mode) {
@@ -232,6 +234,7 @@ export async function loadRun(supabase: Client, userId: string, runId: string) {
     iterations: (iterRes.data ?? []) as IterationRow[],
     steps,
     settings,
+    instructions,
     aiCalls,
   };
 }
@@ -303,7 +306,7 @@ export async function runReview(
   userId: string,
   input: { runId: string; prompt: string },
 ) {
-  const { run, steps, settings } = await loadRun(supabase, userId, input.runId);
+  const { run, steps, settings, instructions } = await loadRun(supabase, userId, input.runId);
   const stepIndex: number = run.step_index;
   const step = steps[stepIndex];
   if (!step) throw new Error("No test step at the current position.");
@@ -316,7 +319,7 @@ export async function runReview(
     .eq("skipped", false);
   const iterationNumber = (count ?? 0) + 1;
 
-  const systemText = settings.critic_instruction;
+  const systemText = instructions.critic_instruction;
   const userText = buildCriticUserText({
     stepName: step.name,
     stepDescription: step.description,
@@ -477,9 +480,9 @@ export async function skipStep(
 }
 
 export async function runFinal(supabase: Client, userId: string, input: { runId: string }) {
-  const { run, settings } = await loadRun(supabase, userId, input.runId);
+  const { run, settings, instructions } = await loadRun(supabase, userId, input.runId);
   const prompt: string = run.current_prompt;
-  const finalInstructions = settings.final_instruction;
+  const finalInstructions = instructions.final_instruction;
 
   const requestParams = {
     stream: true,

@@ -11,13 +11,13 @@ import { Label } from "@/components/ui/label";
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Sign in — Prompt Forge" },
+      { title: "Sign in — thinkAI" },
       {
         name: "description",
         content:
-          "Sign in to Prompt Forge to refine problem statements through a sequence of AI review tests.",
+          "Sign in to thinkAI to refine problem statements through a sequence of AI review tests.",
       },
-      { property: "og:title", content: "Sign in — Prompt Forge" },
+      { property: "og:title", content: "Sign in — thinkAI" },
       {
         property: "og:description",
         content: "Sign in to refine your prompts through staged AI review.",
@@ -68,7 +68,7 @@ function AuthPage() {
       <div className="w-full max-w-sm">
         <Link to="/" className="mb-8 block text-center">
           <span className="font-mono text-xs uppercase tracking-[0.35em] text-primary">
-            Prompt Forge
+            thinkAI
           </span>
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight">

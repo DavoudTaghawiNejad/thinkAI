@@ -65,7 +65,7 @@
   --radius: 0.35rem;
   --font-sans: "Public Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  /* Day / light forge theme */
+  /* Day / light theme */
   --background: oklch(0.97 0.006 75);
   --foreground: oklch(0.24 0.018 65);
   --card: oklch(0.995 0.004 75);
@@ -100,7 +100,7 @@
   --sidebar-ring: oklch(0.62 0.16 55);
 }
 
-/* Night / dark forge theme */
+/* Night / dark theme */
 .dark {
   --background: oklch(0.16 0.012 65);
   --foreground: oklch(0.94 0.012 80);

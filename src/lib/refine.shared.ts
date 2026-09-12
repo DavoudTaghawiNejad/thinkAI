@@ -18,31 +18,59 @@ export type TestStep = {
   position: number;
 };
 
-/** A named critic + final-answer instruction pair. `owned` false = admin/global. */
-export type InstructionPreset = {
-  id: string;
-  name: string;
-  critic_instruction: string;
-  final_instruction: string;
-  owned: boolean;
-};
-
-/** A named, ordered list of test steps. `owned` false = admin/global. */
+/**
+ * One package: the instructions the reviewing and answering models are given,
+ * plus the ordered tests they are used for. Instructions and tests are written
+ * for each other, so they are named, picked, saved, shared and pushed as a
+ * single thing. `owned` false = admin/global.
+ */
 export type TestSequence = {
   id: string;
   name: string;
+  critic_instruction: string;
+  final_instruction: string;
   owned: boolean;
+  /**
+   * This profile's default — what the home-page picker pre-selects. Any sequence
+   * the profile can see may be chosen, General ones included, because the choice
+   * lives on the profile rather than on the sequence.
+   */
+  isDefault: boolean;
+  /**
+   * Delivered by an admin — pushed to every profile, or seeded into the account
+   * at signup — and still exactly as delivered. Read-only: duplicate it to make
+   * a version you can change.
+   */
+  fromAdmin: boolean;
+  /** On a General sequence: what new accounts are seeded with. */
+  newUserRole: NewUserRole;
   steps: TestStep[];
 };
 
+export type NewUserRole = "default" | "alternative" | null;
+
+/**
+ * A pushed sequence that collided with a copy the user had edited. Their
+ * version was left untouched; the pushed one is parked under "… (new)" until
+ * they rename theirs or discard it.
+ */
+export type SequenceConflict = {
+  id: string;
+  /** The canonical name both versions are contending for. */
+  name: string;
+  mineId: string;
+  mineName: string;
+  incomingId: string;
+  incomingName: string;
+};
+
 export type Settings = {
-  critic_instruction: string;
-  final_instruction: string;
   critic_model: string;
   final_model: string;
   debug_mode: boolean;
-  active_preset_id: string | null;
   active_sequence_id: string | null;
+  /** The profile's default sequence — may be one of the shared General ones. */
+  default_sequence_id: string | null;
 };
 
 export type Verdict = {
@@ -161,29 +189,26 @@ export const BETWEEN_TESTS_GUIDANCE =
   "Before the next test, rework your text: answer the open questions, restructure it, and tighten the paragraphs — shorter, without losing meaning.";
 
 // ---------------------------------------------------------------------------
-// Sharing: turn a preset or sequence into a portable YAML document + a
-// readable plain-text rendering, and build the mailto: link. All client-safe.
+// Sharing: turn a sequence — instructions and tests, the whole package — into a
+// portable YAML document plus a readable plain-text rendering, and build the
+// mailto: link. All client-safe.
 // ---------------------------------------------------------------------------
 
 const YAML_OPTS = { lineWidth: 100, noRefs: true } as const;
 
-export function presetToYaml(preset: Pick<InstructionPreset, "name" | "critic_instruction" | "final_instruction">): string {
-  return dumpYaml(
-    {
-      kind: "instruction_preset",
-      name: preset.name,
-      critic_instruction: preset.critic_instruction,
-      final_instruction: preset.final_instruction,
-    },
-    YAML_OPTS,
-  );
-}
-
-export function sequenceToYaml(seq: { name: string; steps: Omit<TestStep, "id" | "position">[] }): string {
+/** The whole package as one portable document — instructions and tests together. */
+export function sequenceToYaml(seq: {
+  name: string;
+  critic_instruction: string;
+  final_instruction: string;
+  steps: Omit<TestStep, "id" | "position">[];
+}): string {
   return dumpYaml(
     {
       kind: "test_sequence",
       name: seq.name,
+      critic_instruction: seq.critic_instruction,
+      final_instruction: seq.final_instruction,
       steps: seq.steps.map((s) => ({
         name: s.name,
         description: s.description,
@@ -196,23 +221,25 @@ export function sequenceToYaml(seq: { name: string; steps: Omit<TestStep, "id" |
   );
 }
 
-export function buildShareText(
-  kind: "preset" | "sequence",
-  obj: { name: string; critic_instruction?: string; final_instruction?: string; steps?: TestStep[] },
-): string {
-  if (kind === "preset") {
-    return [
-      `Model instruction preset: ${obj.name}`,
-      "",
-      "── Critic instruction ──",
-      obj.critic_instruction ?? "",
-      "",
-      "── Final-answer instruction ──",
-      obj.final_instruction ?? "",
-    ].join("\n");
-  }
-  const lines = [`Test sequence: ${obj.name}`, ""];
-  (obj.steps ?? []).forEach((s, i) => {
+export function buildShareText(seq: {
+  name: string;
+  critic_instruction: string;
+  final_instruction: string;
+  steps: Omit<TestStep, "id" | "position">[];
+}): string {
+  const lines = [
+    `Test sequence: ${seq.name}`,
+    "",
+    "── Critic instruction ──",
+    seq.critic_instruction,
+    "",
+    "── Final-answer instruction ──",
+    seq.final_instruction,
+    "",
+    "── Tests ──",
+    "",
+  ];
+  seq.steps.forEach((s, i) => {
     lines.push(
       `${String(i + 1).padStart(2, "0")}. ${s.name}` +
         `  (pass ≥ ${s.pass_threshold}, max ${s.max_iterations} iterations)`,

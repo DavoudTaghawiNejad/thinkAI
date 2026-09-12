@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { loadDefaultsConfig } from "./defaults-config.server";
+import { seedSequencesForUser } from "./sequences.server";
 
 export async function redeemInviteAndCreateUser(input: {
   email: string;
@@ -22,46 +23,22 @@ export async function redeemInviteAndCreateUser(input: {
   });
   if (createErr) throw new Error(createErr.message);
 
-  // The default preset/sequence/settings provisioning lives here, read fresh
-  // from config/defaults.yaml (the DB trigger only creates the profile row — see
-  // supabase/migrations/*_centralize_defaults.sql).
+  // Settings + starting sequences are provisioned here (the DB trigger only
+  // creates the profile row — see supabase/migrations/*_centralize_defaults.sql).
+  // Models come fresh from config/defaults.yaml; the sequences — instructions and
+  // tests together — come from whatever an admin has marked "new-account
+  // default"/"new-account alternative", falling back to that same file.
   const config = await loadDefaultsConfig();
   const userId = created.user.id;
 
-  const { data: preset } = await supabaseAdmin
-    .from("instruction_presets")
-    .insert({
-      user_id: userId,
-      name: "My instructions",
-      critic_instruction: config.critic_instruction,
-      final_instruction: config.final_instructions,
-    })
-    .select("id")
-    .single();
-
-  const { data: sequence } = await supabaseAdmin
-    .from("test_sequences")
-    .insert({ user_id: userId, name: "My sequence" })
-    .select("id")
-    .single();
-
-  await supabaseAdmin
-    .from("test_sequence_steps")
-    .insert(
-      config.test_steps.map((step, position) => ({
-        sequence_id: sequence!.id,
-        position,
-        ...step,
-      })),
-    );
+  const activeSequenceId = await seedSequencesForUser(supabaseAdmin, userId);
 
   await supabaseAdmin.from("settings").insert({
     user_id: userId,
     critic_model: config.critic_model,
     final_model: config.final_model,
     debug_mode: config.debug_mode,
-    active_preset_id: preset!.id,
-    active_sequence_id: sequence!.id,
+    active_sequence_id: activeSequenceId,
   });
 
   return { ok: true };

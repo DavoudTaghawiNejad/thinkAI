@@ -1,4 +1,4 @@
-# Prompt Forge
+# thinkAI
 
 An iterative prompt-refinement workbench. A draft prompt is run through a sequence of
 user-defined "test steps" — each judged by an AI critic that returns a strict-JSON verdict

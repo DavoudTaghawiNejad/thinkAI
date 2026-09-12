@@ -13,24 +13,24 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { generateFinalAnswer, getRun, reviewPrompt, skipCurrentStep } from "@/lib/forge.functions";
+import { generateFinalAnswer, getRun, reviewPrompt, skipCurrentStep } from "@/lib/refine.functions";
 import {
   BETWEEN_TESTS_GUIDANCE,
   buildCriticUserText,
   type AiCallRow,
   type IterationRow,
-} from "@/lib/forge.shared";
+} from "@/lib/refine.shared";
 
 export const Route = createFileRoute("/run/$runId")({
   head: () => ({
     meta: [
-      { title: "Workbench — Prompt Forge" },
+      { title: "Workbench — thinkAI" },
       {
         name: "description",
         content:
-          "Refine your prompt test by test: submit for review, answer the AI's questions, and forge a prompt worth asking.",
+          "Refine your prompt test by test: submit for review, answer the AI's questions, and shape a prompt worth asking.",
       },
-      { property: "og:title", content: "Workbench — Prompt Forge" },
+      { property: "og:title", content: "Workbench — thinkAI" },
       {
         property: "og:description",
         content: "Iterative prompt refinement with staged AI reviews and an auditable debug trail.",
@@ -111,7 +111,7 @@ function Workbench() {
 
   if (loading || !session || !query.data) return null;
 
-  const { run, steps, settings, iterations, aiCalls } = query.data;
+  const { run, steps, settings, instructions, iterations, aiCalls } = query.data;
   const typedIterations = iterations as IterationRow[];
   const stepIndex: number = run.step_index;
   const step = steps[stepIndex];
@@ -303,7 +303,7 @@ function Workbench() {
                 Next request preview · model {settings.critic_model} · history is never sent
               </p>
               <pre className="mt-2 max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed">
-                {`— SYSTEM / INSTRUCTIONS —\n${settings.critic_instruction}\n\n— USER —\n${nextRequestPreview}`}
+                {`— SYSTEM / INSTRUCTIONS —\n${instructions.critic_instruction}\n\n— USER —\n${nextRequestPreview}`}
               </pre>
             </div>
           )}

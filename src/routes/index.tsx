@@ -1,25 +1,36 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Settings2, LogOut, ArrowRight, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/use-auth";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SettingsDialog } from "@/components/settings-dialog";
-import { createRun, deleteRun, getWorkspace, listRuns } from "@/lib/forge.functions";
+import { SequenceConflictDialog } from "@/components/sequence-conflict-dialog";
+import { createRun, deleteRun, getWorkspace, listRuns } from "@/lib/refine.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Prompt Forge — refine a problem before you ask" },
+      { title: "thinkAI — refine a problem before you ask" },
       {
         name: "description",
         content:
-          "Prompt Forge puts your problem statement through a configurable sequence of AI review tests, then sends the survivor to a powerful model.",
+          "thinkAI puts your problem statement through a configurable sequence of AI review tests, then sends the survivor to a powerful model.",
       },
-      { property: "og:title", content: "Prompt Forge — refine a problem before you ask" },
+      { property: "og:title", content: "thinkAI — refine a problem before you ask" },
       {
         property: "og:description",
         content:
@@ -38,6 +49,7 @@ function Home() {
   const { session, loading } = useAuth();
   const [prompt, setPrompt] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sequenceId, setSequenceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth" });
@@ -55,8 +67,25 @@ function Home() {
     enabled: Boolean(session),
   });
 
+  const sequences = useMemo(() => workspace.data?.sequences ?? [], [workspace.data]);
+
+  // Pick up the marked default once the workspace loads, and re-seed if the
+  // current pick disappears (deleted, or renamed away by a push).
+  useEffect(() => {
+    if (!workspace.data) return;
+    setSequenceId((current) => {
+      if (current && sequences.some((s) => s.id === current)) return current;
+      return (
+        sequences.find((s) => s.isDefault)?.id ??
+        workspace.data!.settings.active_sequence_id ??
+        sequences[0]?.id ??
+        null
+      );
+    });
+  }, [workspace.data, sequences]);
+
   const start = useMutation({
-    mutationFn: () => createRun({ data: { prompt } }),
+    mutationFn: () => createRun({ data: { prompt, sequenceId } }),
     onSuccess: (run) => navigate({ to: "/run/$runId", params: { runId: run.id } }),
     onError: (error: Error) => toast.error(error.message),
   });
@@ -68,14 +97,18 @@ function Home() {
 
   if (loading || !session) return null;
 
-  const steps = workspace.data?.steps ?? [];
+  const selectedSequence = sequences.find((s) => s.id === sequenceId) ?? null;
+  const steps = selectedSequence?.steps ?? [];
+
+  const ownSequences = sequences.filter((s) => s.owned);
+  const generalSequences = sequences.filter((s) => !s.owned);
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-5xl px-6 py-10">
       <header className="flex items-center justify-between">
         <div>
           <span className="font-mono text-xs uppercase tracking-[0.35em] text-primary">
-            Prompt Forge
+            thinkAI
           </span>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">
             Refine the question before you ask it.
@@ -103,7 +136,7 @@ function Home() {
       <section className="mt-10 rounded-lg border border-border bg-card p-6">
         <h2 className="text-sm font-medium">Your problem statement</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Write it roughly. The forge will interrogate it, one test at a time.
+          Write it roughly. thinkAI will interrogate it, one test at a time.
         </p>
         <Textarea
           value={prompt}
@@ -112,14 +145,51 @@ function Home() {
           placeholder="Describe the problem or knowledge question you want answered…"
           className="mt-4 font-mono text-sm"
         />
-        <div className="mt-4 flex items-center justify-between gap-4">
-          <p className="text-xs text-muted-foreground">
-            {steps.length > 0
-              ? `${steps.length} tests queued: ${steps.map((s) => s.name).join(" → ")}`
-              : "Loading your test sequence…"}
-          </p>
-          <Button onClick={() => start.mutate()} disabled={!prompt.trim() || start.isPending}>
-            Start forging <ArrowRight className="ml-2 h-4 w-4" />
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-[16rem] flex-1 space-y-1.5">
+            <Label className="text-xs">Test sequence</Label>
+            <Select {...(sequenceId ? { value: sequenceId } : {})} onValueChange={setSequenceId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a sequence" />
+              </SelectTrigger>
+              <SelectContent>
+                {ownSequences.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Your sequences</SelectLabel>
+                    {ownSequences.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                        {s.isDefault ? " · default" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {generalSequences.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>General</SelectLabel>
+                    {generalSequences.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                        {s.isDefault ? " · default" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {!workspace.data
+                ? "Loading your test sequences…"
+                : steps.length > 0
+                  ? `${steps.length} tests queued: ${steps.map((s) => s.name).join(" → ")}`
+                  : "This sequence has no tests yet — add some in Settings."}
+            </p>
+          </div>
+          <Button
+            onClick={() => start.mutate()}
+            disabled={!prompt.trim() || steps.length === 0 || start.isPending}
+          >
+            Start refining <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
         </div>
       </section>
@@ -153,15 +223,17 @@ function Home() {
       </section>
 
       {workspace.data && (
-        <SettingsDialog
-          open={settingsOpen}
-          onOpenChange={setSettingsOpen}
-          settings={workspace.data.settings}
-          presets={workspace.data.presets}
-          sequences={workspace.data.sequences}
-          shareRecipient={workspace.data.shareRecipient}
-          isAdmin={workspace.data.isAdmin}
-        />
+        <>
+          <SettingsDialog
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            settings={workspace.data.settings}
+            sequences={workspace.data.sequences}
+            shareRecipient={workspace.data.shareRecipient}
+            isAdmin={workspace.data.isAdmin}
+          />
+          <SequenceConflictDialog conflicts={workspace.data.sequenceConflicts} />
+        </>
       )}
     </main>
   );

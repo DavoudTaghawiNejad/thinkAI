@@ -205,6 +205,7 @@ export type Database = {
           final_prompt: string | null;
           id: string;
           original_prompt: string;
+          sequence_id: string | null;
           status: string;
           step_index: number;
           title: string;
@@ -219,6 +220,7 @@ export type Database = {
           final_prompt?: string | null;
           id?: string;
           original_prompt: string;
+          sequence_id?: string | null;
           status?: string;
           step_index?: number;
           title?: string;
@@ -233,13 +235,64 @@ export type Database = {
           final_prompt?: string | null;
           id?: string;
           original_prompt?: string;
+          sequence_id?: string | null;
           status?: string;
           step_index?: number;
           title?: string;
           updated_at?: string;
           user_id?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "runs_sequence_id_fkey";
+            columns: ["sequence_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      sequence_push_conflicts: {
+        Row: {
+          created_at: string;
+          id: string;
+          incoming_id: string;
+          mine_id: string;
+          name: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          incoming_id: string;
+          mine_id: string;
+          name: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          incoming_id?: string;
+          mine_id?: string;
+          name?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "sequence_push_conflicts_incoming_id_fkey";
+            columns: ["incoming_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "sequence_push_conflicts_mine_id_fkey";
+            columns: ["mine_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       settings: {
         Row: {
@@ -248,6 +301,7 @@ export type Database = {
           created_at: string;
           critic_model: string;
           debug_mode: boolean;
+          default_sequence_id: string | null;
           final_model: string;
           updated_at: string;
           user_id: string;
@@ -258,6 +312,7 @@ export type Database = {
           created_at?: string;
           critic_model?: string;
           debug_mode?: boolean;
+          default_sequence_id?: string | null;
           final_model?: string;
           updated_at?: string;
           user_id: string;
@@ -268,6 +323,7 @@ export type Database = {
           created_at?: string;
           critic_model?: string;
           debug_mode?: boolean;
+          default_sequence_id?: string | null;
           final_model?: string;
           updated_at?: string;
           user_id?: string;
@@ -281,6 +337,13 @@ export type Database = {
             referencedColumns: ["id"];
           },
           {
+            foreignKeyName: "settings_default_sequence_id_fkey";
+            columns: ["default_sequence_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+          {
             foreignKeyName: "settings_active_sequence_id_fkey";
             columns: ["active_sequence_id"];
             isOneToOne: false;
@@ -291,27 +354,56 @@ export type Database = {
       };
       test_sequences: {
         Row: {
+          archived_at: string | null;
           created_at: string;
+          critic_instruction: string;
+          final_instruction: string;
           id: string;
+          is_default: boolean;
           name: string;
+          new_user_role: string | null;
+          origin_fingerprint: string | null;
+          origin_id: string | null;
           updated_at: string;
           user_id: string | null;
         };
         Insert: {
+          archived_at?: string | null;
           created_at?: string;
+          critic_instruction?: string;
+          final_instruction?: string;
           id?: string;
+          is_default?: boolean;
           name: string;
+          new_user_role?: string | null;
+          origin_fingerprint?: string | null;
+          origin_id?: string | null;
           updated_at?: string;
           user_id?: string | null;
         };
         Update: {
+          archived_at?: string | null;
           created_at?: string;
+          critic_instruction?: string;
+          final_instruction?: string;
           id?: string;
+          is_default?: boolean;
           name?: string;
+          new_user_role?: string | null;
+          origin_fingerprint?: string | null;
+          origin_id?: string | null;
           updated_at?: string;
           user_id?: string | null;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "test_sequences_origin_id_fkey";
+            columns: ["origin_id"];
+            isOneToOne: false;
+            referencedRelation: "test_sequences";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       test_sequence_steps: {
         Row: {
